@@ -103,6 +103,9 @@ internal static class Rules
         ["employer"] = Rule.Redact,
         ["updated_by"] = Rule.Redact,
         ["deleted_by"] = Rule.Redact,
+        // Written by staff for families joining an interview: links, meeting
+        // ids and staff contact details
+        ["meeting_instructions"] = Rule.Redact,
         ["custom_form_payer_names"] = Rule.RedactAll,
         // Payment references embed the sid, and for some gateways the payer's
         // name, email or date of birth
@@ -142,6 +145,10 @@ internal static class Rules
         ["enrolment_accept_link"] = Rule.Null,
         ["gpa_accept_link"] = Rule.Null,
         ["accept_link"] = Rule.Null,
+        // A link that lets the holder join a meeting, and the signed token
+        // that lets the holder book into an event from its kiosk page
+        ["online_meeting_link"] = Rule.Null,
+        ["public_token"] = Rule.Null,
         // Free-form JSON
         ["payload"] = Rule.EmptyJson,
         ["initial_payload"] = Rule.EmptyJson,

@@ -132,7 +132,7 @@ The rules are in `sync\EnrolHQ.Sync\Anonymise\Rules.cs`, keyed on the field name
 | Free text | `Redacted` |
 | File links and file names | `anonymized/removed-file.<ext>` and `removed-file.<ext>` |
 | Street address, apartment | `Fake Street, 42`, `F101` |
-| IP addresses, signed acceptance links | Removed |
+| IP addresses, signed acceptance links, online meeting links, event kiosk tokens | Removed |
 | Custom form payloads | Emptied |
 | Questionnaire answers | Keys kept, values cleared |
 
