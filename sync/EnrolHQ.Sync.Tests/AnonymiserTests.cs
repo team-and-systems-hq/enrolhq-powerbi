@@ -50,7 +50,7 @@ public class AnonymiserTests
             "Guardianmiddle", "PO Box 1", "1234567A", "Contactfirst", "Contactlast", "0400000000", "2123456701",
             "Ventolin", "Realdoctor", "Realdentist", "clinic.com", "Real answer", "1.2.3.4", "5.6.7.8", "token=",
             "Siblingfirst", "Othersibling", "Secondchild", "Staffirst", "Stafflast", "staff@school", "Allergic",
-            "fees.pdf", "principal.png", "favicon.png",
+            "fees.pdf", "principal.png", "favicon.png", "meet.example", "cannot join", "0411000000", "kiosk-signature",
         ];
 
         foreach (var (table, rows) in Fixture)
@@ -83,6 +83,21 @@ public class AnonymiserTests
         Assert.Equal("Asthma", (string)masked["medical_data"]!["medical_conditions"]![0]!);
         Assert.Equal("R-1001", (string)masked["payments"]![0]!["receipt_number"]!);
         Assert.Equal("Dr", (string)masked["user_parent"]!["title"]!);
+    }
+
+    [Fact]
+    public void Removes_meeting_links_joining_instructions_and_event_tokens()
+    {
+        var booking = MaskTable("application_details")[0]["interviews"]![0]!["booking"]!;
+        var openDay = MaskTable("events")[0];
+
+        Assert.Null(booking["online_meeting_link"]);
+        Assert.Equal("Redacted", (string)booking["meeting_instructions"]!);
+        Assert.Equal("2026-06-01", (string)booking["date"]!);
+        Assert.Null(openDay["public_token"]);
+        Assert.Null(openDay["sessions"]![0]!["online_meeting_link"]);
+        Assert.Equal("Open Day", (string)openDay["name"]!);
+        Assert.Equal("open-day", (string)openDay["slug"]!);
     }
 
     [Fact]

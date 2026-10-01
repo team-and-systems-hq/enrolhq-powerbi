@@ -846,6 +846,9 @@ Anon.KeyRules = [
     employer = "Redact",
     updated_by = "Redact",
     deleted_by = "Redact",
+    // Written by staff for families joining an interview: links, meeting
+    // ids and staff contact details
+    meeting_instructions = "Redact",
     custom_form_payer_names = "RedactAll",
     // Payment references embed the sid, and for some gateways the payer's
     // name, email or date of birth
@@ -885,6 +888,10 @@ Anon.KeyRules = [
     enrolment_accept_link = "Null",
     gpa_accept_link = "Null",
     accept_link = "Null",
+    // A link that lets the holder join a meeting, and the signed token
+    // that lets the holder book into an event from its kiosk page
+    online_meeting_link = "Null",
+    public_token = "Null",
     // Free-form JSON
     payload = "EmptyJson",
     initial_payload = "EmptyJson",
