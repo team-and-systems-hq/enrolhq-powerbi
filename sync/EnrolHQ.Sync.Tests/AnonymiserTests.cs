@@ -60,7 +60,7 @@ public class AnonymiserTests
             {
                 SafetyNet.Apply((JsonObject)((JsonArray)rows!)[index]!, masked[index], table);
                 var json = masked[index].ToJsonString();
-                Assert.Empty(secrets.Where(secret => json.Contains(secret, StringComparison.Ordinal)));
+                Assert.DoesNotContain(secrets, secret => json.Contains(secret, StringComparison.Ordinal));
             }
         }
     }
