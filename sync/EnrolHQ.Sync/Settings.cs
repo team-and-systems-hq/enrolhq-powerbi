@@ -1,8 +1,10 @@
 namespace EnrolHQ.Sync;
 
-/// <summary>What to sync and where to keep it, read from a .env file.</summary>
+/// <summary>What to sync and where to keep it, read from a .env file and environment variables.</summary>
 internal sealed record Settings(string Instance, string ApiToken, bool Anonymise, string DataDirectory)
 {
+    private static readonly string[] Names = ["ENROLHQ_INSTANCE", "ENROLHQ_API_TOKEN", "ENROLHQ_ANONYMISE", "ENROLHQ_DATA_DIR"];
+
     public Uri BaseUri => new($"https://{Instance}/api/v2/");
 
     public string DatabasePath => Path.Combine(DataDirectory, "enrolhq.db");
@@ -13,27 +15,45 @@ internal sealed record Settings(string Instance, string ApiToken, bool Anonymise
 
     /// <summary>
     /// Loads settings from <paramref name="envPath"/>, or from the nearest .env in
-    /// the current directory or one of its parents.
+    /// the current directory or one of its parents. An environment variable of
+    /// the same name wins over the file, so the API token need not be kept in
+    /// a file at all.
     /// </summary>
-    public static Settings Load(string? envPath)
+    public static Settings Load(string? envPath, Func<string, string?>? environment = null)
     {
-        var path = envPath ?? FindEnvFile(Directory.GetCurrentDirectory())
-            ?? throw new SettingsException("No .env file found. Copy .env.example to .env and fill it in, or pass --env <path>.");
-        if (!File.Exists(path))
+        environment ??= Environment.GetEnvironmentVariable;
+        if (envPath is not null && !File.Exists(envPath))
         {
-            throw new SettingsException($"No .env file at {path}.");
+            throw new SettingsException($"No .env file at {envPath}.");
         }
 
-        var values = Parse(File.ReadAllLines(path));
+        var path = envPath ?? FindEnvFile(Directory.GetCurrentDirectory());
+        var values = path is null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : Parse(File.ReadAllLines(path));
+        foreach (var name in Names)
+        {
+            if (environment(name) is { Length: > 0 } value)
+            {
+                values[name] = value.Trim();
+            }
+        }
+
+        if (values.Count == 0)
+        {
+            throw new SettingsException(
+                "No settings found. Copy .env.example to .env and fill it in, pass --env <path>, "
+                + "or set ENROLHQ_INSTANCE and ENROLHQ_API_TOKEN as environment variables.");
+        }
+
         var instance = NormaliseInstance(Required(values, "ENROLHQ_INSTANCE"));
         var apiToken = Required(values, "ENROLHQ_API_TOKEN");
         var anonymise = ParseAnonymise(values.GetValueOrDefault("ENROLHQ_ANONYMISE"));
 
         // Real and anonymised data never share a folder, so a change of setting
         // can never mix the two in one database.
+        var beside = path is null ? Directory.GetCurrentDirectory() : Path.GetDirectoryName(Path.GetFullPath(path))!;
         var root = values.GetValueOrDefault("ENROLHQ_DATA_DIR") is { Length: > 0 } custom
-            ? Path.GetFullPath(custom, Path.GetDirectoryName(Path.GetFullPath(path))!)
-            : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, "data");
+            ? Path.GetFullPath(custom, beside)
+            : Path.Combine(beside, "data");
         var dataDirectory = Path.Combine(root, instance, anonymise ? "anonymised" : "real");
 
         return new Settings(instance, apiToken, anonymise, dataDirectory);
@@ -94,7 +114,7 @@ internal sealed record Settings(string Instance, string ApiToken, bool Anonymise
     private static string Required(Dictionary<string, string> values, string name) =>
         values.GetValueOrDefault(name) is { Length: > 0 } value
             ? value
-            : throw new SettingsException($"{name} is missing from .env.");
+            : throw new SettingsException($"{name} is missing. Set it in .env or as an environment variable.");
 
     private static string? FindEnvFile(string start)
     {

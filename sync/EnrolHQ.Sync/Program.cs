@@ -19,11 +19,14 @@ const string Usage =
       --env <path>       The .env file to use (default: the nearest .env at or above the current folder)
       --help             Show this help
 
-    .env settings:
+    Settings, in .env or as environment variables (an environment variable wins):
       ENROLHQ_INSTANCE   The school's EnrolHQ address, for example enrol.yourschool.edu.au
       ENROLHQ_API_TOKEN  The school's API token
       ENROLHQ_ANONYMISE  yes (default) or no. When yes, personal data is masked before it is stored
-      ENROLHQ_DATA_DIR   Where to keep the local copy (default: a data folder beside the .env file)
+      ENROLHQ_DATA_DIR   Where to keep the local copy (default: a data folder beside the .env file,
+                         or in the current folder when there is no .env file)
+
+    The API token is not accepted as an option, because other programs can see a command line.
 
     Stopping a download with Ctrl+C is safe. Run the same command again and it carries on.
     """;
@@ -170,7 +173,7 @@ static void CheckStoreMatches(Settings settings, Store store)
     {
         throw new SettingsException(
             $"The local copy at {settings.DatabasePath} holds {storedMode} data for {storedInstance}, "
-            + $"but .env asks for {mode} data for {settings.Instance}. Delete that folder or use another ENROLHQ_DATA_DIR.");
+            + $"but the settings ask for {mode} data for {settings.Instance}. Delete that folder or use another ENROLHQ_DATA_DIR.");
     }
 }
 

@@ -139,7 +139,7 @@ internal sealed class ApiClient : IDisposable
 
             if (status is 401 or 403)
             {
-                throw new ApiException(path, status, "EnrolHQ did not accept the API token in .env.");
+                throw new ApiException(path, status, "EnrolHQ did not accept the API token.");
             }
 
             // 400 is what a sign-in gets when another one is in progress.
