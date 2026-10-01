@@ -1,0 +1,155 @@
+{
+  "application_details": [
+    {
+      "id": "3f2b8c1e-1111-4222-8333-444455556666",
+      "sid": "20150304-7-2027-REALLAST-R",
+      "external_id": "S1234",
+      "student_code": "SCH-0042",
+      "title": "Miss",
+      "first_name": "Realfirst",
+      "last_name": "Reallast",
+      "middle_name": "Realmiddle",
+      "preferred_name": "Realpreferred",
+      "traditional_name": "",
+      "dob": "2015-03-04",
+      "gender": 2,
+      "gender_other": "",
+      "entry_year": 2027,
+      "entry_grade": 7,
+      "application_status": 3,
+      "email": "student@real-family.com",
+      "mobile_phone": "+61400111222",
+      "home_phone": "0298765432",
+      "usi": "ABC1234567",
+      "vsn": "",
+      "nesa_number": null,
+      "custody_details": "Sensitive custody text",
+      "cultural_requirements": null,
+      "parents_salutation": "Mr and Mrs Reallast",
+      "religion": "Other",
+      "religion_other": "Same as Grandma Reallast",
+      "avatar_src": "https://bucket.s3.amazonaws.com/school/avatars/photo.JPG?X-Amz-Signature=abc",
+      "enrolment_accept_link": "https://enrol.example/accept?token=abc",
+      "custom_form_payer_names": { "enr-f": "Parentfirst Parentlast" },
+      "questionnaire": { "hobbies": "Chess with Grandpa Reallast", "siblings_here": ["yes"] },
+      "user_parent": {
+        "id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "title": "Dr",
+        "first_name": "Parentfirst",
+        "last_name": "Parentlast",
+        "middle_name": "Parentmiddle",
+        "email": "parent@real-family.com",
+        "mobile_phone": "+61411222333",
+        "business_phone": "0398765432",
+        "health_care_card_number": "123456789A",
+        "occupation": "Engineer",
+        "employer": "Parentlast Plumbing",
+        "how_hear": ["Friend"],
+        "how_hear_other": "Parentfirst's colleague",
+        "consent": { "ip_addr": "1.2.3.4", "is_agreed": true },
+        "alumnus": { "id": "bbbbbbbb-1111-4222-8333-444455556666", "full_name": "Parentfirst Parentlast", "dob": "1980-01-02", "alumni_number": "A0042" },
+        "residential_address": { "id": "cccccccc-1111-4222-8333-444455556666", "street_address": "1 Real Street", "apartment": "Unit 9", "suburb": "Kew", "state": "VIC", "postcode": "3101" }
+      },
+      "non_user_parent": null,
+      "residential_address": { "id": "dddddddd-1111-4222-8333-444455556666", "street_address": "1 Real Street", "apartment": "", "suburb": "Kew", "state": "VIC", "postcode": "3101" },
+      "guardians": [
+        { "id": 12, "first_name": "Guardianfirst", "last_name": "Guardianlast", "middle_name": "Guardianmiddle", "email": "", "postal_address": "PO Box 1, Kew", "working_with_children_number": "1234567A" }
+      ],
+      "emergency_contacts": [
+        { "id": 12, "first_name": "Contactfirst", "last_name": "Contactlast", "mobile_phone": "0400000000", "relationship_to_student_other": "Neighbour of the Reallasts" }
+      ],
+      "siblings": [
+        { "first_name": "Siblingfirst", "last_name": "Reallast", "dob": "2012-05-06" },
+        { "first_name": "Othersibling", "last_name": "Reallast", "dob": "2017-08-09" }
+      ],
+      "medical_data": {
+        "medicare_number": "2123456701",
+        "medication": "Ventolin",
+        "symptoms_treatment": "",
+        "medical_conditions": ["Asthma"],
+        "medical_conditions_other": "See Dr Realdoctor",
+        "doctor": { "name": "Jane Realdoctor", "telephone": "0398765432", "email": "doctor@clinic.com" },
+        "dentist": { "name": "John Realdentist", "telephone": "0398760000" }
+      },
+      "campus": { "id": 1, "name": "Kew Campus", "email": "kew@school.edu.au" },
+      "custom_form_submits": [
+        { "id": "s1", "form": "f1", "payload": { "answer": "Real answer" }, "submission_ip": "1.2.3.4" }
+      ],
+      "enrolment_documents": {
+        "school_report_documents": { "id": 5, "kind": "SCHOOL_REPORT", "note": "Report for Realfirst", "documents": ["0f0e0d0c-1111-4222-8333-444455556666"] }
+      },
+      "payments": [
+        { "id": 3, "reference_id": "enr-f:100:20150304-7-2027-REALLAST-R", "transaction_number": "Parentfirst Parentlast 0042", "receipt_number": "R-1001", "amount": 250.5, "result_text": "Approved for P Parentlast" }
+      ],
+      "progress": {
+        "application_status": 3,
+        "enrolment_offer": {
+          "kind": "enrolment",
+          "accept_link": "https://enrol.example/offer?token=def",
+          "user_parent_acceptance_ip": "5.6.7.8",
+          "agreement_documents": [ { "id": "e1", "label": "Fee schedule", "link": "https://cdn.example/school/fees.pdf" } ]
+        }
+      }
+    },
+    {
+      "id": "99999999-1111-4222-8333-444455556666",
+      "sid": "REALLAST-S",
+      "first_name": "Secondchild",
+      "last_name": "Reallast",
+      "dob": "2017-08-09",
+      "entry_year": 2029,
+      "user_parent": {
+        "id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "title": "Dr",
+        "first_name": "Parentfirst",
+        "last_name": "Parentlast",
+        "email": "parent@real-family.com",
+        "mobile_phone": "+61411222333"
+      }
+    },
+    {
+      "first_name": "Adam",
+      "last_name": "Adams",
+      "usi": "0",
+      "mobile_phone": 61400111222,
+      "payload": "{\"a\":1}"
+    }
+  ],
+  "event_bookings": [
+    {
+      "id": "77777777-1111-4222-8333-444455556666",
+      "event": "88888888-1111-4222-8333-444455556666",
+      "booking_status": "confirmed",
+      "custom_field_1": { "confirm_flag": true, "text": "Ask for Parentfirst" },
+      "custom_field_2": ["Option A"],
+      "custom_field_3": "Allergic to nuts",
+      "event_booking_questionnaire": { "how_did_you_hear_about_this": ["Friend"], "how_did_you_hear_about_this_other": "" },
+      "student_profiles": ["3f2b8c1e-1111-4222-8333-444455556666"],
+      "student_profile_event_bookings": [
+        { "student_profile": "3f2b8c1e-1111-4222-8333-444455556666", "event_booking_pdf": "0f0e0d0c-9999-4222-8333-444455556666" }
+      ],
+      "attendees": [
+        { "id": "66666666-1111-4222-8333-444455556666", "parent": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "title": "Dr", "first_name": "Parentfirst", "last_name": "Parentlast", "is_parent": true },
+        { "id": "55555555-1111-4222-8333-444455556666", "parent": null, "title": "", "first_name": "Realfirst", "last_name": "Reallast", "is_parent": false }
+      ]
+    }
+  ],
+  "campuses": [
+    {
+      "id": "44444444-1111-4222-8333-444455556666",
+      "name": "Kew Campus",
+      "email": "kew@school.edu.au",
+      "telephone": "03 9000 0000",
+      "principal_name": "Pat Principal",
+      "principal_signature_src": "https://cdn.example/sigs/principal.png",
+      "cms_images": { "favicon": "https://cdn.example/school/favicon.png", "logo_dark": null },
+      "residential_address": { "id": "33333333-1111-4222-8333-444455556666", "street_address": "10 School Road", "suburb": "Kew" }
+    }
+  ],
+  "staff": [
+    { "id": "22222222-1111-4222-8333-444455556666", "first_name": "Staffirst", "last_name": "Stafflast", "email": "staff@school.edu.au", "mobile_phone": "0411000000", "roles": ["11111111-1111-4222-8333-444455556666"], "is_active": true }
+  ],
+  "form_submissions": [
+    { "form_id": "12121212-1111-4222-8333-444455556666", "created_at": "2026-05-01T09:00:00+08:00", "completed_at": null, "form_pdf": "0f0e0d0c-1111-4222-8333-444455556666", "student_profile": { "id": "3f2b8c1e-1111-4222-8333-444455556666", "first_name": "Realfirst", "last_name": "Reallast", "dob": "2015-03-04" } }
+  ]
+}
