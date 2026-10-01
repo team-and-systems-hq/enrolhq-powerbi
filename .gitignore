@@ -1,0 +1,10 @@
+.env
+bin/
+tools/
+logs/
+data/
+sync/**/bin/
+sync/**/obj/
+TestResults/
+.vs/
+*.user
