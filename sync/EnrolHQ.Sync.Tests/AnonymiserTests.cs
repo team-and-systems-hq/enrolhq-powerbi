@@ -131,17 +131,20 @@ public class AnonymiserTests
     }
 
     [Theory]
-    [InlineData("""{"id":"s","first_name":"Adam"}""", "first_name", "Adam")]
-    [InlineData("""{"id":"s","last_name":"Adams"}""", "last_name", "Adams")]
-    [InlineData("""{"id":"s","usi":"0"}""", "usi", "0")]
-    [InlineData("""{"id":"s","usi":"2123456701"}""", "usi", "2123456701")]
-    public void A_fake_value_is_never_the_original(string json, string field, string original)
+    [InlineData("first_name", "Adam", "Zoe")]
+    [InlineData("last_name", "Adams", "Wilson")]
+    [InlineData("usi", "1234567890", "9876543210")]
+    [InlineData("mobile_phone", "0400111222", "0411999888")]
+    [InlineData("email", "a@one.example", "b@two.example")]
+    public void A_fake_value_does_not_depend_on_the_real_one(string field, string one, string other)
     {
-        // Every id from s0 to s499, so the case where the first pick equals the original is covered.
-        foreach (var id in Enumerable.Range(0, 500))
+        // Anything that steered the fake value away from the real one would let
+        // someone with this code work out the real value from the fake.
+        foreach (var id in Enumerable.Range(0, 200))
         {
-            var masked = Mask(json.Replace("\"s\"", $"\"s{id}\""));
-            Assert.NotEqual(original, (string)masked[field]!);
+            var first = Mask($$"""{"id":"s{{id}}","{{field}}":"{{one}}"}""");
+            var second = Mask($$"""{"id":"s{{id}}","{{field}}":"{{other}}"}""");
+            Assert.Equal((string)first[field]!, (string)second[field]!);
         }
     }
 
@@ -241,5 +244,88 @@ public class AnonymiserTests
 
                 break;
         }
+    }
+
+    [Fact]
+    public void Text_in_a_field_nobody_has_reviewed_is_redacted_and_reported()
+    {
+        var unreviewed = new List<string>();
+        var masked = Anonymiser.Mask(
+            (JsonObject)JsonNode.Parse("""{"id":"a1","religion":"Anglican","new_field":"Call Jo on 0411 222 333","notes_list":["one","two"],"created_at":"2026-05-01T09:00:00+08:00","campus":"3f2b8c1e-1111-4222-8333-444455556666","count":3}""")!,
+            "applications",
+            "applications#0",
+            unreviewed);
+
+        Assert.Equal("Anglican", (string)masked["religion"]!);
+        Assert.Equal("Redacted", (string)masked["new_field"]!);
+        Assert.Equal(["Redacted", "Redacted"], masked["notes_list"]!.AsArray().Select(item => (string)item!));
+        // Dates, ids and numbers carry no names, so they are kept without review.
+        Assert.Equal("2026-05-01T09:00:00+08:00", (string)masked["created_at"]!);
+        Assert.Equal("3f2b8c1e-1111-4222-8333-444455556666", (string)masked["campus"]!);
+        Assert.Equal(3, (int)masked["count"]!);
+        Assert.Equal(["applications.new_field", "applications.notes_list[]", "applications.notes_list[]"], unreviewed);
+        Assert.Empty(Anonymiser.Violations(masked, "applications"));
+    }
+
+    [Fact]
+    public void The_check_catches_text_in_a_field_nobody_has_reviewed()
+    {
+        var masked = MaskTable("application_details")[0];
+        masked["new_field"] = "Call Jo on 0411 222 333";
+
+        Assert.Contains("application_details.new_field", Anonymiser.Violations(masked, "application_details"));
+    }
+
+    [Fact]
+    public void A_record_where_text_was_expected_is_redacted_whole_and_checked()
+    {
+        var masked = Mask("""{"custody_details":{"text":"Father has no contact","pages":2,"signed":true},"comment":[{"body":"Ring Jo"}],"custom_field_1":61411222333}""");
+
+        Assert.Equal("""{"text":"Redacted","pages":"Redacted","signed":true}""", masked["custody_details"]!.ToJsonString());
+        Assert.Equal("""[{"body":"Redacted"}]""", masked["comment"]!.ToJsonString());
+        Assert.Equal("Redacted", (string)masked["custom_field_1"]!);
+        Assert.Empty(Anonymiser.Violations(masked, "application_details"));
+
+        masked["custody_details"]!["text"] = "Father has no contact";
+        Assert.Contains("application_details.custody_details", Anonymiser.Violations(masked, "application_details"));
+    }
+
+    [Fact]
+    public void A_full_name_matches_the_same_persons_first_and_last_name()
+    {
+        var masked = Mask("""{"id":"a1","first_name":"Realfirst","last_name":"Reallast","full_name":"Realfirst Reallast","case_manager_name":"Pat Manager","middle_name":"M"}""");
+
+        Assert.Equal($"{masked["first_name"]} {masked["last_name"]}", (string)masked["full_name"]!);
+        // Someone else named on the record keeps a different fake name.
+        Assert.NotEqual((string)masked["full_name"]!, (string)masked["case_manager_name"]!);
+    }
+
+    [Fact]
+    public void A_record_named_only_by_full_name_is_a_person()
+    {
+        var masked = Mask("""{"id":"c1","full_name":"Jo Whitlock","middle_name":"Anne","preferred_name":"Jojo"}""", "application_details");
+
+        Assert.Equal("", (string)masked["middle_name"]!);
+        Assert.Equal("", (string)masked["preferred_name"]!);
+    }
+
+    [Fact]
+    public void Fake_phone_numbers_are_ones_set_aside_for_fiction()
+    {
+        foreach (var id in Enumerable.Range(0, 200))
+        {
+            var masked = Mask($$"""{"id":"s{{id}}","mobile_phone":"0400111222","home_phone":"0398765432"}""");
+            Assert.Contains((string)masked["mobile_phone"]!, Masks.FictionalMobiles);
+            Assert.Contains(((string)masked["home_phone"]!)[..8], Masks.FictionalLandlinePrefixes);
+        }
+    }
+
+    [Theory]
+    [InlineData("Passport J.Smith", "removed-file")]
+    [InlineData("report.PDF", "removed-file.PDF")]
+    [InlineData("scan.jpeg?sig=abc", "removed-file.jpeg")]
+    public void A_file_name_keeps_only_a_real_file_extension(string original, string expected)
+    {
+        Assert.Equal(expected, (string)Mask($$"""{"filename":"{{original}}"}""")["filename"]!);
     }
 }

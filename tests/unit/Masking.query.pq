@@ -116,8 +116,8 @@ let
         {"Parent and guardian middle names are blanked", masked[user_parent][middle_name] = "" and masked[guardians]{0}[middle_name] = ""},
 
         {"Email is a random example address", endsWithExample(masked[email]) and Text.Length(Text.BeforeDelimiter(masked[email], "@")) = 20},
-        {"Mobile is a random Australian mobile", Text.StartsWith(masked[mobile_phone], "+6143") and Text.Length(masked[mobile_phone]) = 12},
-        {"Home phone is a random Australian landline", List.Contains({"+612", "+613", "+617", "+618"}, Text.Start(masked[home_phone], 4)) and Text.Length(masked[home_phone]) = 12},
+        {"Mobile is one the ACMA sets aside for fiction", Text.StartsWith(masked[mobile_phone], "+6149157") and Text.Length(masked[mobile_phone]) = 12},
+        {"Home phone is in a landline range the ACMA sets aside for fiction", List.Contains({"5550", "7010"}, Text.Middle(masked[home_phone], 4, 4)) and Text.Length(masked[home_phone]) = 12},
         {"Identifier becomes digits of the same length", isDigits(masked[usi]) and Text.Length(masked[usi]) = 10},
         {"Guardian identifier becomes digits of the same length", isDigits(masked[guardians]{0}[working_with_children_number]) and Text.Length(masked[guardians]{0}[working_with_children_number]) = 8},
         {"Medicare number becomes digits of the same length", isDigits(masked[medical_data][medicare_number]) and Text.Length(masked[medical_data][medicare_number]) = 10},
@@ -169,14 +169,16 @@ let
         {"Records without an id still differ from each other", masked[siblings]{0}[first_name] <> masked[siblings]{1}[first_name] or masked[siblings]{0}[last_name] <> masked[siblings]{1}[last_name]},
         {"Same numeric id on different record kinds gives different values", masked[guardians]{0}[first_name] <> masked[emergency_contacts]{0}[first_name] or masked[guardians]{0}[last_name] <> masked[emergency_contacts]{0}[last_name]},
 
-        {"A fake name is never the original", List.MatchesAll(
+        {"A fake name does not depend on the real one", List.Count(List.Distinct(List.Transform(
             {"Adam", "Felix", "Zoe", "Oliver", "Mia"},
-            (name) => EnrolHQ.Anonymise({[id = studentId, first_name = name]}, "applications"){0}[first_name] <> name
-        )},
-        {"Masked digits are never the original", List.MatchesAll(
-            {"0", "5", "12", "987", "2123456701"},
-            (digits) => EnrolHQ.Anonymise({[id = studentId, usi = digits]}, "applications"){0}[usi] <> digits
-        )},
+            (name) => EnrolHQ.Anonymise({[id = studentId, first_name = name]}, "applications"){0}[first_name]
+        ))) = 1},
+        {"Masked digits do not depend on the real ones", List.Count(List.Distinct(List.Transform(
+            {"1234567890", "2123456701", "0000000000"},
+            (digits) => EnrolHQ.Anonymise({[id = studentId, usi = digits]}, "applications"){0}[usi]
+        ))) = 1},
+        {"A record where text was expected is redacted whole", EnrolHQ.Anonymise({[custody_details = [text = "Father has no contact", count = 2, confirmed = true]]}, "application_details"){0}[custody_details] = [text = "Redacted", count = "Redacted", confirmed = true]},
+        {"A file name keeps only a real file extension", EnrolHQ.Anonymise({[filename = "Passport J.Smith"]}, "leads"){0}[filename] = "removed-file"},
 
         {"Masking a non-text value still produces a masked value", not wrongType[HasError] and wrongType[Value]{0}[payload] = "{}"}
     },

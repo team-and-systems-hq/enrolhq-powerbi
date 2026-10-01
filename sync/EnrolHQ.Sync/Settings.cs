@@ -1,7 +1,8 @@
 namespace EnrolHQ.Sync;
 
 /// <summary>What to sync and where to keep it, read from a .env file and environment variables.</summary>
-internal sealed record Settings(string Instance, string ApiToken, bool Anonymise, string DataDirectory)
+/// <param name="Source">Where the settings came from, for the log. Never includes a value.</param>
+internal sealed record Settings(string Instance, string ApiToken, bool Anonymise, string DataDirectory, string Source = "")
 {
     private static readonly string[] Names = ["ENROLHQ_INSTANCE", "ENROLHQ_API_TOKEN", "ENROLHQ_ANONYMISE", "ENROLHQ_DATA_DIR"];
 
@@ -18,6 +19,10 @@ internal sealed record Settings(string Instance, string ApiToken, bool Anonymise
     /// the current directory or one of its parents. An environment variable of
     /// the same name wins over the file, so the API token need not be kept in
     /// a file at all.
+    ///
+    /// When the environment sets both the address and the token, no .env is
+    /// looked for unless one is named, so a stray .env in a parent folder can
+    /// never add settings such as ENROLHQ_ANONYMISE=no.
     /// </summary>
     public static Settings Load(string? envPath, Func<string, string?>? environment = null)
     {
@@ -27,15 +32,29 @@ internal sealed record Settings(string Instance, string ApiToken, bool Anonymise
             throw new SettingsException($"No .env file at {envPath}.");
         }
 
-        var path = envPath ?? FindEnvFile(Directory.GetCurrentDirectory());
-        var values = path is null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : Parse(File.ReadAllLines(path));
+        var fromEnvironment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var name in Names)
         {
-            if (environment(name) is { Length: > 0 } value)
+            if (environment(name) is { } value && !string.IsNullOrWhiteSpace(value))
             {
-                values[name] = value.Trim();
+                fromEnvironment[name] = value.Trim().Trim('"', '\'');
             }
         }
+
+        var environmentIsEnough = fromEnvironment.ContainsKey("ENROLHQ_INSTANCE") && fromEnvironment.ContainsKey("ENROLHQ_API_TOKEN");
+        var path = envPath ?? (environmentIsEnough ? null : FindEnvFile(Directory.GetCurrentDirectory()));
+        var values = path is null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : Parse(File.ReadAllLines(path));
+        foreach (var (name, value) in fromEnvironment)
+        {
+            values[name] = value;
+        }
+
+        var source = (path, fromEnvironment.Count) switch
+        {
+            (null, _) => "environment variables",
+            (_, 0) => Path.GetFullPath(path),
+            _ => $"{Path.GetFullPath(path)} and environment variables ({string.Join(", ", fromEnvironment.Keys)})",
+        };
 
         if (values.Count == 0)
         {
@@ -51,12 +70,21 @@ internal sealed record Settings(string Instance, string ApiToken, bool Anonymise
         // Real and anonymised data never share a folder, so a change of setting
         // can never mix the two in one database.
         var beside = path is null ? Directory.GetCurrentDirectory() : Path.GetDirectoryName(Path.GetFullPath(path))!;
-        var root = values.GetValueOrDefault("ENROLHQ_DATA_DIR") is { Length: > 0 } custom
-            ? Path.GetFullPath(custom, beside)
-            : Path.Combine(beside, "data");
+        string root;
+        try
+        {
+            root = values.GetValueOrDefault("ENROLHQ_DATA_DIR") is { Length: > 0 } custom
+                ? Path.GetFullPath(custom, beside)
+                : Path.Combine(beside, "data");
+        }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new SettingsException($"ENROLHQ_DATA_DIR is not a usable folder: {error.Message}");
+        }
+
         var dataDirectory = Path.Combine(root, instance, anonymise ? "anonymised" : "real");
 
-        return new Settings(instance, apiToken, anonymise, dataDirectory);
+        return new Settings(instance, apiToken, anonymise, dataDirectory, source);
     }
 
     internal static Dictionary<string, string> Parse(IEnumerable<string> lines)

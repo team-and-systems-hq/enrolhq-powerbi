@@ -36,6 +36,14 @@ internal enum Rule
 /// </summary>
 internal static class Rules
 {
+    /// <summary>
+    /// Raise this whenever a rule is added or changed. A local copy remembers
+    /// the version it was masked under, and one masked under an older version
+    /// is downloaded again in full, because it still holds whatever the older
+    /// rules left unmasked.
+    /// </summary>
+    public const int Version = 4;
+
     /// <summary>Applied wherever the key appears.</summary>
     private static readonly Dictionary<string, Rule> ByKey = new(StringComparer.Ordinal)
     {
@@ -49,6 +57,9 @@ internal static class Rules
         ["parish_priest_name"] = Rule.FullName,
         ["student_profile_name"] = Rule.FullName,
         ["parent_name"] = Rule.FullName,
+        // Staff named on a campus
+        ["principal_name"] = Rule.FullName,
+        ["registrar_name"] = Rule.FullName,
         // Built from the real surname and first initial
         ["sid"] = Rule.Sid,
         // Contact
@@ -194,6 +205,8 @@ internal static class Rules
         ["document_group.note"] = Rule.Redact,
         ["document_groups.note"] = Rule.Redact,
         ["agreement_documents.link"] = Rule.FileKey,
+        // Written by staff for families coming to an interview
+        ["location.hint_text"] = Rule.Redact,
         ["email_log.subject"] = Rule.Redact,
     };
 

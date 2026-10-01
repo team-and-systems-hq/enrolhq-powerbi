@@ -1,0 +1,26 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Test
+        run: dotnet test sync/EnrolHQ.Sync.Tests --configuration Release
+      - name: Check for vulnerable packages
+        shell: pwsh
+        run: |
+          $report = dotnet list sync/EnrolHQ.Sync.sln package --vulnerable --include-transitive 2>&1
+          $report
+          if ($report -match 'has the following vulnerable packages') { exit 1 }

@@ -26,9 +26,9 @@ public class SafetyNetTests
     public void Redacts_a_kept_field_that_contains_an_email_address()
     {
         var (masked, redacted) = Run(
-            """{"id":"a1","user_parent":{"id":"p1","email":"jo@whitlock.example","church_attended":"ask jo@whitlock.example"}}""");
+            """{"id":"a1","user_parent":{"id":"p1","email":"jo@whitlock.example","occupation":"ask jo@whitlock.example"}}""");
 
-        Assert.Equal("Redacted", (string)masked["user_parent"]!["church_attended"]!);
+        Assert.Equal("Redacted", (string)masked["user_parent"]!["occupation"]!);
         Assert.Single(redacted);
     }
 
@@ -87,6 +87,36 @@ public class SafetyNetTests
     }
 
     [Fact]
+    public void Matches_a_short_surname_only_as_a_whole_word()
+    {
+        var (masked, redacted) = Run("""{"id":"a1","last_name":"Lee","user_parent":{"id":"p1","occupation":"Owner, Lee Trading"},"house":"Leeds"}""");
+
+        Assert.Equal("Redacted", (string)masked["user_parent"]!["occupation"]!);
+        Assert.Equal("Leeds", (string)masked["house"]!);
+        Assert.Equal(["applications.user_parent.occupation"], redacted);
+    }
+
+    [Fact]
+    public void Each_part_of_a_hyphenated_surname_counts()
+    {
+        var (masked, _) = Run("""{"id":"a1","last_name":"Whitlock-Parker","user_parent":{"id":"p1","occupation":"Director, Whitlock Holdings"}}""");
+
+        Assert.Equal("Redacted", (string)masked["user_parent"]!["occupation"]!);
+    }
+
+    [Theory]
+    [InlineData("parent_name", "Jo Whitlock")]
+    [InlineData("student_profile_name", "Jo Whitlock")]
+    [InlineData("case_manager_name", "Jo Whitlock")]
+    [InlineData("snapshot_last_name", "Whitlock")]
+    public void Takes_surnames_from_every_name_field(string field, string name)
+    {
+        var (masked, _) = Run($$$"""{"id":"a1","{{{field}}}":"{{{name}}}","agent_details":{"company":"Whitlock Holdings"}}""");
+
+        Assert.Equal("Redacted", (string)masked["agent_details"]!["company"]!);
+    }
+
+    [Fact]
     public void Never_redacts_ids()
     {
         var (masked, redacted) = Run(
@@ -111,6 +141,20 @@ public class SafetyNetTests
         var redacted = SafetyNet.Apply(original, masked, "applications");
 
         Assert.Equal("Whitlock-Parker", (string)masked["user_parent"]!["last_name"]!);
+        Assert.Empty(redacted);
+    }
+
+    [Fact]
+    public void Never_redacts_a_field_with_a_rule_even_when_its_fake_value_matches()
+    {
+        // Find a record whose fake surname happens to be the real one.
+        var id = Enumerable.Range(0, 5000).Select(number => $"a{number}")
+            .First(candidate => (string)Anonymiser.Mask((JsonObject)JsonNode.Parse($$"""{"id":"{{candidate}}","last_name":"Smith"}""")!, "applications", "x")["last_name"]! == "Smith");
+
+        var (masked, redacted) = Run($$$"""{"id":"{{{id}}}","last_name":"Smith","user_parent":{"id":"p1","last_name":"Smith"}}""");
+
+        // Redacting it would tell anyone that the fake surname is the real one.
+        Assert.Equal("Smith", (string)masked["last_name"]!);
         Assert.Empty(redacted);
     }
 }

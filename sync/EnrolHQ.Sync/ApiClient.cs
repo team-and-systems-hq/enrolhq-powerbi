@@ -49,9 +49,16 @@ internal sealed class ApiClient : IDisposable
 
     public int SignIns { get; private set; }
 
+    /// <summary>EnrolHQ's clock, from the Date header of the last answer, if it sent one.</summary>
+    public DateTimeOffset? ServerTime { get; private set; }
+
+    /// <summary>When the last answer arrived, by this computer's clock.</summary>
+    public DateTimeOffset AnsweredAt { get; private set; }
+
     public static HttpClient CreateHttpClient(Uri baseUri)
     {
-        var http = new HttpClient { BaseAddress = baseUri, Timeout = TimeSpan.FromMinutes(3) };
+        var handler = new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All };
+        var http = new HttpClient(handler) { BaseAddress = baseUri, Timeout = TimeSpan.FromMinutes(3) };
         http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         http.DefaultRequestHeaders.UserAgent.ParseAdd("enrolhq-sync/0.1");
         return http;
@@ -75,6 +82,10 @@ internal sealed class ApiClient : IDisposable
                 Requests++;
                 response = await _http.SendAsync(request, cancel);
             }
+            catch (Exception error) when (IsUnknownAddress(error))
+            {
+                throw UnknownAddress();
+            }
             catch (Exception error) when (IsTransient(error, cancel) && attempt < MaxAttempts)
             {
                 await WaitAsync(Backoff(attempt), $"{path}: no response ({error.GetType().Name})", cancel);
@@ -83,10 +94,20 @@ internal sealed class ApiClient : IDisposable
 
             using (response)
             {
+                ServerTime = response.Headers.Date;
+                AnsweredAt = _now();
                 if (response.IsSuccessStatusCode)
                 {
-                    await using var body = await response.Content.ReadAsStreamAsync(cancel);
-                    return await JsonNode.ParseAsync(body, cancellationToken: cancel);
+                    var text = await response.Content.ReadAsStringAsync(cancel);
+                    try
+                    {
+                        return JsonNode.Parse(text);
+                    }
+                    catch (System.Text.Json.JsonException)
+                    {
+                        // For example a sign-in or maintenance page from a proxy in front of EnrolHQ.
+                        throw new ApiException(path, status: 200, "The answer was not JSON, so it did not come from the EnrolHQ API.");
+                    }
                 }
 
                 var status = (int)response.StatusCode;
@@ -125,12 +146,36 @@ internal sealed class ApiClient : IDisposable
             using var request = new HttpRequestMessage(HttpMethod.Post, path);
             request.Headers.Authorization = new AuthenticationHeaderValue("Token", _apiToken);
             SignIns++;
-            using var response = await _http.SendAsync(request, cancel);
+            HttpResponseMessage sent;
+            try
+            {
+                sent = await _http.SendAsync(request, cancel);
+            }
+            catch (Exception error) when (IsUnknownAddress(error))
+            {
+                throw UnknownAddress();
+            }
+            catch (Exception error) when (IsTransient(error, cancel) && attempt < MaxAttempts)
+            {
+                await WaitAsync(Backoff(attempt), $"sign-in: no response ({error.GetType().Name})", cancel);
+                continue;
+            }
+
+            using var response = sent;
             var status = (int)response.StatusCode;
 
             if (response.IsSuccessStatusCode)
             {
-                var body = await JsonNode.ParseAsync(await response.Content.ReadAsStreamAsync(cancel), cancellationToken: cancel);
+                JsonNode? body;
+                try
+                {
+                    body = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancel));
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    throw new ApiException(path, status, "The answer was not JSON. Check ENROLHQ_INSTANCE is the school's EnrolHQ address.");
+                }
+
                 _accessToken = body?["access_token"]?.GetValue<string>()
                     ?? throw new ApiException(path, status, "EnrolHQ did not return an access token.");
                 _tokenIssuedAt = _now();
@@ -190,9 +235,17 @@ internal sealed class ApiClient : IDisposable
         return wait > LongestWait ? LongestWait : wait;
     }
 
+    /// <summary>A dropped connection or a timeout is worth trying again.</summary>
     private static bool IsTransient(Exception error, CancellationToken cancel) =>
         error is HttpRequestException or IOException
         || (error is TaskCanceledException && !cancel.IsCancellationRequested);
+
+    /// <summary>An address that does not exist is not worth trying again: it is almost always a typo in ENROLHQ_INSTANCE.</summary>
+    private static bool IsUnknownAddress(Exception error) =>
+        error is HttpRequestException { InnerException: System.Net.Sockets.SocketException { SocketErrorCode: System.Net.Sockets.SocketError.HostNotFound } };
+
+    private ApiException UnknownAddress() =>
+        new(_http.BaseAddress?.Host ?? "", status: 0, "No such address. Check ENROLHQ_INSTANCE, and that this computer can reach the internet.");
 
     private static async Task<string> ReadDetailAsync(HttpResponseMessage response, CancellationToken cancel)
     {
@@ -219,7 +272,7 @@ internal sealed class ApiClient : IDisposable
 }
 
 internal sealed class ApiException(string path, int status, string detail)
-    : Exception($"EnrolHQ answered {status} for {path}. {detail}".TrimEnd())
+    : Exception((status == 0 ? $"Could not reach {path}. {detail}" : $"EnrolHQ answered {status} for {path}. {detail}").TrimEnd())
 {
     public int Status { get; } = status;
 }

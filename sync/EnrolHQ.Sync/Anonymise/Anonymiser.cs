@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -8,19 +9,25 @@ namespace EnrolHQ.Sync.Anonymise;
 /// nested record, before it is flattened into columns, because the rules
 /// depend on where a field sits.
 ///
-/// Must produce the same output as Anon.* in connector/EnrolHQ.pq.
+/// Text in a field with no rule is kept only when the field is on the reviewed
+/// list (Reviewed.cs), or when it is a date, a time or an id. Any other text is
+/// redacted, so a field EnrolHQ adds later is never stored unmasked unnoticed.
+///
+/// Masks as Anon.* in connector/EnrolHQ.pq does, except for the reviewed list,
+/// which the connector does not have.
 /// </summary>
 internal static class Anonymiser
 {
     /// <param name="record">The record as the API returned it. Not modified.</param>
     /// <param name="table">The table the record belongs to.</param>
     /// <param name="fallbackSeed">Seeds the fake values when the record has no id of its own.</param>
-    public static JsonObject Mask(JsonObject record, string table, string fallbackSeed) =>
-        MaskRecord(record, fallbackSeed, table);
+    /// <param name="unreviewed">Receives the path of each field redacted because it is not on the reviewed list.</param>
+    public static JsonObject Mask(JsonObject record, string table, string fallbackSeed, ICollection<string>? unreviewed = null) =>
+        MaskRecord(record, fallbackSeed, table, table, unreviewed ?? [], sameAs: null);
 
     /// <summary>
-    /// Returns the path of every field that has a masking rule but does not
-    /// look masked. Paths only; values are never reported.
+    /// Returns the path of every field that does not look masked. Paths only;
+    /// values are never reported.
     /// </summary>
     public static List<string> Violations(JsonObject masked, string table)
     {
@@ -29,26 +36,49 @@ internal static class Anonymiser
         return found;
     }
 
-    private static JsonNode? MaskValue(JsonNode? value, string seed, string parent) => value switch
+    /// <summary>
+    /// Text the reviewed list does not need to cover: empty, a date, a time or
+    /// an id. None of these can carry a name or a contact detail.
+    /// </summary>
+    internal static bool NeedsNoReview(string value) =>
+        value.Length == 0
+        || value == Masks.Redacted
+        || Guid.TryParse(value, out _)
+        || DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _)
+        || (value.Length >= 19 && value[10] == 'T' && DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+        || (value.Length is 5 or 8 && TimeOnly.TryParseExact(value, ["HH:mm", "HH:mm:ss"], CultureInfo.InvariantCulture, DateTimeStyles.None, out _));
+
+    private static JsonNode? MaskValue(JsonNode? value, string seed, string parent, string path, ICollection<string> unreviewed) => value switch
     {
-        JsonObject record => MaskRecord(record, seed, parent),
-        JsonArray list => new JsonArray(list.Select((item, index) => MaskValue(item, $"{seed}/{index}", parent)).ToArray()),
+        JsonObject record => MaskRecord(record, seed, parent, path, unreviewed, sameAs: null),
+        JsonArray list => new JsonArray(list.Select((item, index) => MaskValue(item, $"{seed}/{index}", parent, path + "[]", unreviewed)).ToArray()),
+        JsonValue leaf when IsText(leaf, out var text) && !NeedsNoReview(text) && !Reviewed.Allows(path) => Unreviewed(path, unreviewed),
         _ => value?.DeepClone(),
     };
 
-    private static JsonObject MaskRecord(JsonObject source, string seed, string parent)
+    private static JsonNode Unreviewed(string path, ICollection<string> unreviewed)
     {
-        var ownSeed = SeedFor(source, seed, parent);
+        unreviewed.Add(path);
+        return Masks.Redacted;
+    }
+
+    /// <param name="sameAs">The seed of the person this record describes, when it is not identified by its own id.</param>
+    private static JsonObject MaskRecord(JsonObject source, string seed, string parent, string path, ICollection<string> unreviewed, string? sameAs)
+    {
+        var ownSeed = sameAs ?? SeedFor(source, seed, parent);
         var isPerson = IsPerson(source);
         var masked = new JsonObject();
         foreach (var (key, value) in source)
         {
+            var fieldPath = $"{path}.{key}";
             var rule = Rules.For(parent, key, isPerson);
             masked[key] = rule switch
             {
-                null => MaskValue(value, $"{ownSeed}/{key}", key),
+                // A parent's alumnus record is the parent, so it gets the parent's fake name.
+                null when key == "alumnus" && value is JsonObject alumnus => MaskRecord(alumnus, ownSeed, key, fieldPath, unreviewed, sameAs: ownSeed),
+                null => MaskValue(value, $"{ownSeed}/{key}", key, fieldPath, unreviewed),
                 Rule.Sid => MaskSid(value, source, ownSeed),
-                _ => Apply(rule.Value, value, $"{ownSeed}|{key}", key),
+                _ => Apply(rule.Value, value, $"{ownSeed}|{key}", key, ownSeed),
             };
         }
 
@@ -83,9 +113,10 @@ internal static class Anonymiser
     }
 
     private static bool IsPerson(JsonObject source) =>
-        source.ContainsKey("first_name") || source.ContainsKey("last_name");
+        source.ContainsKey("first_name") || source.ContainsKey("last_name") || source.ContainsKey("full_name");
 
-    private static JsonNode? Apply(Rule rule, JsonNode? value, string seed, string key)
+    /// <param name="recordSeed">The seed of the record the field belongs to.</param>
+    private static JsonNode? Apply(Rule rule, JsonNode? value, string seed, string key, string recordSeed)
     {
         if (value is null || rule == Rule.Null)
         {
@@ -99,15 +130,15 @@ internal static class Anonymiser
             (Rule.EmptyJson, _) => "{}",
             (Rule.EmptyValues, _) => EmptyValues(value),
             (Rule.RedactAll, _) => RedactLeaves(value),
-            (_, JsonArray list) => new JsonArray(list.Select((item, index) => Apply(rule, item, $"{seed}/{index}", key)).ToArray()),
-            // A structured value under a masked key is walked like any other record.
-            (_, JsonObject record) => MaskRecord(record, seed, key),
-            _ => Scalar(rule, TextOf((JsonValue)value), seed),
+            (_, JsonArray list) => new JsonArray(list.Select((item, index) => Apply(rule, item, $"{seed}/{index}", key, recordSeed)).ToArray()),
+            // A record where text was expected: nothing in it is kept.
+            (_, JsonObject) => RedactLeaves(value),
+            _ => Scalar(rule, TextOf((JsonValue)value), seed, key, recordSeed),
         };
     }
 
     /// <summary>Empty stays empty, as in the SQL masks.</summary>
-    private static string Scalar(Rule rule, string value, string seed)
+    private static string Scalar(Rule rule, string value, string seed, string key, string recordSeed)
     {
         if (rule == Rule.Blank || value.Length == 0)
         {
@@ -116,11 +147,13 @@ internal static class Anonymiser
 
         return rule switch
         {
-            Rule.FirstName => Masks.Pick(Names.First, seed, value),
-            Rule.LastName => Masks.Pick(Names.Last, seed, value),
-            Rule.FullName => Masks.FullName(value, seed),
-            Rule.MobilePhone => Masks.Phone(value, seed, mobile: true),
-            Rule.HomePhone or Rule.BusinessPhone => Masks.Phone(value, seed, mobile: false),
+            Rule.FirstName => Masks.Pick(Names.First, seed),
+            Rule.LastName => Masks.Pick(Names.Last, seed),
+            // full_name is the record's own person, so it matches their first_name and last_name.
+            // Other name fields, such as case_manager_name, are someone else.
+            Rule.FullName => Masks.FullName(key == "full_name" ? recordSeed : seed),
+            Rule.MobilePhone => Masks.Phone(seed, mobile: true),
+            Rule.HomePhone or Rule.BusinessPhone => Masks.Phone(seed, mobile: false),
             Rule.Email => Masks.Email(seed),
             Rule.Digits => Masks.Digits(value, seed),
             Rule.Redact => Masks.Redacted,
@@ -150,12 +183,13 @@ internal static class Anonymiser
         _ => null,
     };
 
-    /// <summary>Redacts every piece of text inside a value, however it is nested.</summary>
+    /// <summary>Redacts every piece of text and every number inside a value, however it is nested. Yes/no answers are kept.</summary>
     private static JsonNode? RedactLeaves(JsonNode? value) => value switch
     {
         JsonObject record => new JsonObject(record.Select(field => KeyValuePair.Create(field.Key, RedactLeaves(field.Value)))),
         JsonArray list => new JsonArray(list.Select(RedactLeaves).ToArray()),
         JsonValue leaf when leaf.GetValueKind() == JsonValueKind.String && leaf.GetValue<string>().Length > 0 => Masks.Redacted,
+        JsonValue leaf when leaf.GetValueKind() == JsonValueKind.Number => Masks.Redacted,
         _ => value?.DeepClone(),
     };
 
@@ -186,6 +220,9 @@ internal static class Anonymiser
                 }
 
                 break;
+            case JsonValue leaf when IsText(leaf, out var text) && !NeedsNoReview(text) && !Reviewed.Allows(path):
+                found.Add(path);
+                break;
         }
     }
 
@@ -204,7 +241,8 @@ internal static class Anonymiser
             (Rule.EmptyJson, _) => IsText(value, out var text) && text == "{}",
             (Rule.EmptyValues, _) => JsonNode.DeepEquals(value, EmptyValues(value)),
             (Rule.RedactAll, _) => JsonNode.DeepEquals(value, RedactLeaves(value)),
-            (_, JsonArray or JsonObject) => true,
+            (_, JsonObject) => JsonNode.DeepEquals(value, RedactLeaves(value)),
+            (_, JsonArray) => true,
             _ => IsText(value, out var text) && Conforms(rule, text),
         };
         if (!conforms)
@@ -212,20 +250,12 @@ internal static class Anonymiser
             found.Add(path);
         }
 
-        switch (rule, value)
+        if (rule is not (Rule.EmptyJson or Rule.EmptyValues or Rule.RedactAll or Rule.Null) && value is JsonArray items)
         {
-            case (Rule.EmptyJson or Rule.EmptyValues or Rule.RedactAll or Rule.Null, _):
-                break;
-            case (_, JsonArray list):
-                foreach (var item in list)
-                {
-                    CollectRuleViolations(rule, item, path + "[]", key, found);
-                }
-
-                break;
-            case (_, JsonObject record):
-                CollectViolations(record, path, key, found);
-                break;
+            foreach (var item in items)
+            {
+                CollectRuleViolations(rule, item, path + "[]", key, found);
+            }
         }
     }
 
@@ -246,9 +276,9 @@ internal static class Anonymiser
                 var parts = value.Split(' ');
                 return parts.Length == 2 && Names.First.Contains(parts[0]) && Names.Last.Contains(parts[1]);
             case Rule.MobilePhone:
-                return value.StartsWith("+6143", StringComparison.Ordinal) && value.Length == 12 && Masks.IsDigits(value[1..]);
+                return Masks.IsFictionalPhone(value, mobile: true);
             case Rule.HomePhone or Rule.BusinessPhone:
-                return value.Length == 12 && Masks.LandlinePrefixes.Contains(value[..4]) && Masks.IsDigits(value[1..]);
+                return Masks.IsFictionalPhone(value, mobile: false);
             case Rule.Email:
                 return Masks.EmailDomains.Any(domain => value.EndsWith("@" + domain, StringComparison.Ordinal));
             case Rule.Digits:

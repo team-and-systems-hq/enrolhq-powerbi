@@ -122,4 +122,42 @@ public sealed class SettingsTests : IDisposable
 
         Assert.Contains("must be yes or no", error.Message);
     }
+
+    [Fact]
+    public void With_the_address_and_token_in_the_environment_a_stray_env_file_is_not_read()
+    {
+        var parent = Path.Combine(_folder, "parent");
+        var child = Path.Combine(parent, "child");
+        Directory.CreateDirectory(child);
+        File.WriteAllLines(Path.Combine(parent, ".env"), ["ENROLHQ_ANONYMISE=no"]);
+        var before = Directory.GetCurrentDirectory();
+        Directory.SetCurrentDirectory(child);
+        try
+        {
+            var settings = Settings.Load(null, Variables(("ENROLHQ_INSTANCE", "enrol.school.edu.au"), ("ENROLHQ_API_TOKEN", "secret")));
+
+            Assert.True(settings.Anonymise);
+            Assert.Equal("environment variables", settings.Source);
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(before);
+        }
+    }
+
+    [Fact]
+    public void A_blank_environment_variable_does_not_hide_the_file()
+    {
+        var settings = Load(Variables(("ENROLHQ_INSTANCE", "   ")), "ENROLHQ_INSTANCE=enrol.school.edu.au", "ENROLHQ_API_TOKEN=secret");
+
+        Assert.Equal("enrol.school.edu.au", settings.Instance);
+    }
+
+    [Fact]
+    public void A_quoted_environment_variable_is_read_without_its_quotes()
+    {
+        var settings = Load(Variables(("ENROLHQ_INSTANCE", "\"enrol.school.edu.au\"")), "ENROLHQ_API_TOKEN=secret");
+
+        Assert.Equal("enrol.school.edu.au", settings.Instance);
+    }
 }

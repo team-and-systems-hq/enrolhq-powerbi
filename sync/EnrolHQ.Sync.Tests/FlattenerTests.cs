@@ -175,4 +175,21 @@ public class FlattenerTests
     {
         Assert.Equal(singular, Flattener.Singular(plural));
     }
+
+    [Fact]
+    public void A_child_table_name_from_an_odd_key_is_safe_for_a_file_name()
+    {
+        var tables = Flatten("applications", """{"id":"a1","..\\docs list":[{"id":"d1"}]}""");
+
+        Assert.Contains(tables, table => table.Name == "applications____docs_list");
+    }
+
+    [Fact]
+    public void A_time_sent_in_utc_becomes_local_time()
+    {
+        var table = Flatten("applications", """{"id":"a1","created_at":"2026-05-01T01:00:00Z"}""").Single();
+
+        var expected = DateTime.SpecifyKind(new DateTimeOffset(2026, 5, 1, 1, 0, 0, TimeSpan.Zero).ToLocalTime().DateTime, DateTimeKind.Unspecified);
+        Assert.Equal(expected, Value(table, 0, "created_at"));
+    }
 }
