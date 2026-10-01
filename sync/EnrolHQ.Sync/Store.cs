@@ -28,17 +28,38 @@ internal sealed record SyncState(
 internal sealed class Store : IDisposable
 {
     private readonly SqliteConnection _connection;
+    private readonly FileStream? _lock;
 
-    public Store(string path)
+    /// <param name="exclusive">
+    /// Holds a lock on the local copy for as long as the store is open, so two
+    /// runs can never write to it at once.
+    /// </param>
+    public Store(string path, bool exclusive = false)
     {
         if (Path.GetDirectoryName(path) is { Length: > 0 } directory)
         {
             Directory.CreateDirectory(directory);
         }
 
+        if (exclusive)
+        {
+            try
+            {
+                _lock = new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+            }
+            catch (IOException)
+            {
+                throw new SettingsException(
+                    $"Another enrolhq-sync is already using the local copy at {Path.GetDirectoryName(Path.GetFullPath(path))}. Wait for it to finish.");
+            }
+        }
+
         _connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path }.ToString());
         _connection.Open();
         Execute("PRAGMA journal_mode = WAL");
+        // Without this SQLite leaves a replaced or removed record readable in
+        // the file's unused space.
+        Execute("PRAGMA secure_delete = ON");
         Execute(
             """
             CREATE TABLE IF NOT EXISTS meta (
@@ -165,9 +186,16 @@ internal sealed class Store : IDisposable
     /// did not see no longer exist in EnrolHQ and are removed.
     /// </summary>
     /// <returns>How many records were removed.</returns>
-    public int CompleteCycle(string table, bool removeUnseen, DateTimeOffset now)
+    /// <param name="cycle">The cycle the caller downloaded. Only its own records are kept.</param>
+    /// <param name="advanceWatermark">False when the list changed during the download, so the next run asks for the same changes again.</param>
+    public int CompleteCycle(string table, int cycle, bool removeUnseen, DateTimeOffset now, bool advanceWatermark = true)
     {
         var state = GetState(table);
+        if (state.Cycle != cycle)
+        {
+            throw new InvalidOperationException($"{table} was downloaded by another run at the same time. Run enrolhq-sync --full --only {table}.");
+        }
+
         using var transaction = _connection.BeginTransaction();
         var removed = 0;
         if (removeUnseen)
@@ -176,14 +204,16 @@ internal sealed class Store : IDisposable
             delete.Transaction = transaction;
             delete.CommandText = "DELETE FROM records WHERE table_name = $table AND cycle < $cycle";
             delete.Parameters.AddWithValue("$table", table);
-            delete.Parameters.AddWithValue("$cycle", state.Cycle);
+            delete.Parameters.AddWithValue("$cycle", cycle);
             removed = delete.ExecuteNonQuery();
         }
 
         using (var complete = _connection.CreateCommand())
         {
             complete.Transaction = transaction;
-            complete.CommandText = "UPDATE sync_state SET completed_at = $now, watermark = started_at WHERE table_name = $table";
+            complete.CommandText = advanceWatermark
+                ? "UPDATE sync_state SET completed_at = $now, watermark = started_at WHERE table_name = $table"
+                : "UPDATE sync_state SET completed_at = $now WHERE table_name = $table";
             complete.Parameters.AddWithValue("$now", Format(now));
             complete.Parameters.AddWithValue("$table", table);
             complete.ExecuteNonQuery();
@@ -191,6 +221,75 @@ internal sealed class Store : IDisposable
 
         transaction.Commit();
         return removed;
+    }
+
+    /// <summary>
+    /// Rebuilds the file so that nothing remains of records replaced or
+    /// removed before secure_delete was switched on.
+    /// </summary>
+    public void Compact()
+    {
+        Execute("VACUUM");
+        Execute("PRAGMA wal_checkpoint(TRUNCATE)");
+    }
+
+    /// <summary>Moves the start of the current download earlier, when EnrolHQ's clock is behind this computer's.</summary>
+    public void MoveStart(string table, DateTimeOffset startedAt) =>
+        Execute("UPDATE sync_state SET started_at = $startedAt WHERE table_name = $table", ("$table", table), ("$startedAt", Format(startedAt)));
+
+    /// <summary>Saves records outside a page download, keeping each one's place in the current cycle.</summary>
+    public void Save(string table, int cycle, IEnumerable<(string Id, JsonObject Record)> records, DateTimeOffset now)
+    {
+        using var transaction = _connection.BeginTransaction();
+        foreach (var (id, record) in records)
+        {
+            using var upsert = _connection.CreateCommand();
+            upsert.Transaction = transaction;
+            upsert.CommandText =
+                """
+                INSERT INTO records (table_name, id, json, cycle, fetched_at) VALUES ($table, $id, $json, $cycle, $fetchedAt)
+                ON CONFLICT (table_name, id) DO UPDATE SET json = excluded.json, cycle = excluded.cycle, fetched_at = excluded.fetched_at
+                """;
+            upsert.Parameters.AddWithValue("$table", table);
+            upsert.Parameters.AddWithValue("$id", id);
+            upsert.Parameters.AddWithValue("$json", record.ToJsonString());
+            upsert.Parameters.AddWithValue("$cycle", cycle);
+            upsert.Parameters.AddWithValue("$fetchedAt", Format(now));
+            upsert.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    public int Remove(string table, IEnumerable<string> ids)
+    {
+        using var transaction = _connection.BeginTransaction();
+        var removed = 0;
+        foreach (var id in ids)
+        {
+            using var delete = _connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM records WHERE table_name = $table AND id = $id";
+            delete.Parameters.AddWithValue("$table", table);
+            delete.Parameters.AddWithValue("$id", id);
+            removed += delete.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return removed;
+    }
+
+    public HashSet<string> Ids(string table)
+    {
+        using var command = Command("SELECT id FROM records WHERE table_name = $table", ("$table", table));
+        using var reader = command.ExecuteReader();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        while (reader.Read())
+        {
+            ids.Add(reader.GetString(0));
+        }
+
+        return ids;
     }
 
     public int Count(string table)
@@ -209,7 +308,11 @@ internal sealed class Store : IDisposable
         }
     }
 
-    public void Dispose() => _connection.Dispose();
+    public void Dispose()
+    {
+        _connection.Dispose();
+        _lock?.Dispose();
+    }
 
     private static string Format(DateTimeOffset time) => time.ToString("O", CultureInfo.InvariantCulture);
 

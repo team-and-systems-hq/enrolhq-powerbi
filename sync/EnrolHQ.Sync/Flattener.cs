@@ -119,7 +119,7 @@ internal static class Flattener
                     row[name + CountSuffix] = (long)list.Count;
                     foreach (var item in list.OfType<JsonObject>())
                     {
-                        AddRow($"{table}_{name}", item, childLink, tables);
+                        AddRow(ChildTable(table, name), item, childLink, tables);
                     }
 
                     break;
@@ -133,7 +133,7 @@ internal static class Flattener
                     row[name] = string.Join(", ", values.Select(ToText));
                     if (childLink is not null && values.All(item => item is string text && Guid.TryParse(text, out _)))
                     {
-                        AddIdRows($"{table}_{name}", Singular(key) + "_id", values, childLink.Value, tables);
+                        AddIdRows(ChildTable(table, name), Singular(key) + "_id", values, childLink.Value, tables);
                     }
 
                     break;
@@ -143,6 +143,13 @@ internal static class Flattener
             }
         }
     }
+
+    /// <summary>
+    /// A child table's name, which also names its file. It comes from a key in
+    /// the API's answer, so anything but letters, digits and underscores is replaced.
+    /// </summary>
+    private static string ChildTable(string table, string name) =>
+        $"{table}_{new string(name.Select(character => char.IsAsciiLetterOrDigit(character) || character == '_' ? character : '_').ToArray())}";
 
     private static void AddIdRows(
         string table,
@@ -265,11 +272,22 @@ internal static class Flattener
     private static DateTime? ParseDate(string value) =>
         DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) ? date : null;
 
-    /// <summary>Times are kept as the school's local clock time; the offset is dropped.</summary>
-    private static DateTime? ParseDateTime(string value) =>
-        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var time)
-            ? DateTime.SpecifyKind(time.DateTime, DateTimeKind.Unspecified)
-            : null;
+    /// <summary>
+    /// Times are kept as the school's local clock time and the offset is
+    /// dropped. EnrolHQ sends local times with the school's offset; one sent in
+    /// UTC is turned into this computer's local time, which is the school's
+    /// when the tool runs at the school.
+    /// </summary>
+    private static DateTime? ParseDateTime(string value)
+    {
+        if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var time))
+        {
+            return null;
+        }
+
+        var local = time.Offset == TimeSpan.Zero ? time.ToLocalTime() : time;
+        return DateTime.SpecifyKind(local.DateTime, DateTimeKind.Unspecified);
+    }
 
     private static object? Scalar(JsonNode? node)
     {

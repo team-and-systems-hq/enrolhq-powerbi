@@ -61,24 +61,42 @@ Reporter? reporter = null;
 try
 {
     var settings = Settings.Load(options.EnvPath);
+    if (options.Command is "status" or "export" && !File.Exists(settings.DatabasePath))
+    {
+        // Nothing to show, and no reason to create an empty copy for a mistyped address.
+        Console.Error.WriteLine($"There is no local copy for {settings.Instance} at {settings.DataDirectory}. Run enrolhq-sync to make one.");
+        return 1;
+    }
+
     reporter = new Reporter(options.Command == "status" ? null : settings.LogDirectory, startedAt);
-    using var store = new Store(settings.DatabasePath);
+    using var store = new Store(settings.DatabasePath, exclusive: options.Command != "status");
     CheckStoreMatches(settings, store);
 
     reporter.Line($"{settings.Instance} · {(settings.Anonymise ? "anonymised" : "REAL DATA, not anonymised")}");
+    reporter.Line($"Settings: {settings.Source}");
     reporter.Line($"Local copy: {settings.DataDirectory}");
 
     switch (options.Command)
     {
         case "status":
             ShowStatus(store, reporter);
+            WarnIfOutdated(settings, store, reporter);
             break;
         case "export":
+            WarnIfOutdated(settings, store, reporter);
             WriteProject(settings, await Exporter.ExportAsync(settings, store, reporter, cancellation.Token), options, reporter);
             break;
         default:
-            await SyncAsync(settings, store, options, reporter, cancellation.Token);
+            var skipped = await SyncAsync(settings, store, options, reporter, cancellation.Token);
+            // With --only or --skip, tables that were left out may still be out of date.
+            WarnIfOutdated(settings, store, reporter);
             WriteProject(settings, await Exporter.ExportAsync(settings, store, reporter, cancellation.Token), options, reporter);
+            if (skipped.Count > 0)
+            {
+                reporter.Line($"Not downloaded, because EnrolHQ refused: {string.Join(", ", skipped)}. Check what the API token is allowed to read.");
+                return 1;
+            }
+
             break;
     }
 
@@ -92,6 +110,14 @@ catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
 catch (Exception error) when (error is SettingsException or ApiException or AnonymisationException)
 {
     Report(error.Message);
+    return 1;
+}
+catch (Exception error)
+{
+    // Anything else, for example a locked database or a full disk. The type
+    // and message say what happened; a stack trace would not help a user.
+    Report($"Stopped by an unexpected error ({error.GetType().Name}): {error.Message}");
+    Report("Everything downloaded so far is saved. Run the same command again to carry on.");
     return 1;
 }
 finally
@@ -111,7 +137,8 @@ void Report(string message)
     }
 }
 
-static async Task SyncAsync(Settings settings, Store store, Options options, Reporter reporter, CancellationToken cancel)
+// Returns the tables EnrolHQ refused to serve.
+static async Task<List<string>> SyncAsync(Settings settings, Store store, Options options, Reporter reporter, CancellationToken cancel)
 {
     using var api = new ApiClient(
         ApiClient.CreateHttpClient(settings.BaseUri),
@@ -120,12 +147,37 @@ static async Task SyncAsync(Settings settings, Store store, Options options, Rep
         notice: reporter.Line);
     var runner = new SyncRunner(settings.Anonymise, store, api, reporter);
     var timer = System.Diagnostics.Stopwatch.StartNew();
+    var outdated = settings.Anonymise && options.Select(Endpoint.All).Any(endpoint => SyncRunner.IsOutdated(store, endpoint.Table));
+    var skipped = new List<string>();
 
     try
     {
         foreach (var endpoint in options.Select(Endpoint.All))
         {
-            await runner.SyncAsync(endpoint, options.Full, cancel);
+            try
+            {
+                await runner.SyncAsync(endpoint, options.Full, cancel);
+            }
+            catch (ApiException error) when (error.Status is 403 or 404)
+            {
+                // One endpoint this token may not read should not stop the others.
+                reporter.Line(error.Message);
+                skipped.Add(endpoint.Table);
+                continue;
+            }
+
+            if (endpoint.Table == "application_details")
+            {
+                await runner.ReconcileDetailsAsync(endpoint, cancel);
+            }
+        }
+
+        if (outdated)
+        {
+            // Downloading again replaces the records, but what they held
+            // before is still in the file's unused space until it is rebuilt.
+            reporter.Line("Compacting the local copy, so nothing the older masking rules left unmasked remains in the file");
+            store.Compact();
         }
     }
     finally
@@ -141,7 +193,18 @@ static async Task SyncAsync(Settings settings, Store store, Options options, Rep
                 reporter.Line($"  {Reporter.Number(count),7}  {path}");
             }
         }
+
+        if (runner.UnreviewedHits.Count > 0)
+        {
+            reporter.Line("Fields with no masking rule that are not on the reviewed list, so their text was redacted (see Reviewed.cs):");
+            foreach (var (path, count) in runner.UnreviewedHits.OrderByDescending(hit => hit.Value).ThenBy(hit => hit.Key))
+            {
+                reporter.Line($"  {Reporter.Number(count),7}  {path}");
+            }
+        }
     }
+
+    return skipped;
 }
 
 static void WriteProject(Settings settings, IReadOnlyList<ExportedTable> tables, Options options, Reporter reporter)
@@ -174,6 +237,20 @@ static void CheckStoreMatches(Settings settings, Store store)
         throw new SettingsException(
             $"The local copy at {settings.DatabasePath} holds {storedMode} data for {storedInstance}, "
             + $"but the settings ask for {mode} data for {settings.Instance}. Delete that folder or use another ENROLHQ_DATA_DIR.");
+    }
+}
+
+// Syncing a table puts it right; export and status only read the copy.
+static void WarnIfOutdated(Settings settings, Store store, Reporter reporter)
+{
+    var outdated = settings.Anonymise
+        ? Endpoint.All.Select(endpoint => endpoint.Table).Where(table => SyncRunner.IsOutdated(store, table)).ToList()
+        : [];
+    if (outdated.Count > 0)
+    {
+        reporter.Line("The masking rules have changed since these tables were downloaded, so they may hold fields that are now masked: "
+            + string.Join(", ", outdated));
+        reporter.Line("  Run enrolhq-sync to download them again.");
     }
 }
 

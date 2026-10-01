@@ -77,29 +77,41 @@ internal static class PowerBiProject
 
     public static string ProjectFileFor(Settings settings) => Path.Combine(FolderFor(settings), Name + ".pbip");
 
+    private static string ModelFolder(Settings settings) => Path.Combine(FolderFor(settings), Name + ".SemanticModel");
+
+    private static string ReportFolder(Settings settings) => Path.Combine(FolderFor(settings), Name + ".Report");
+
+    /// <summary>
+    /// A project exists when any part of it does. The .pbip file only points at
+    /// the report, so a school may have renamed or removed it while its model
+    /// and pages, which hold its own work, are still there.
+    /// </summary>
+    public static bool Exists(Settings settings) =>
+        File.Exists(ProjectFileFor(settings)) || Directory.Exists(ModelFolder(settings)) || Directory.Exists(ReportFolder(settings));
+
     /// <returns>True when the project was written; false when one already exists and was left alone.</returns>
     public static bool Write(Settings settings, IReadOnlyList<ExportedTable> tables, bool overwrite)
     {
-        var folder = FolderFor(settings);
-        if (File.Exists(ProjectFileFor(settings)) && !overwrite)
+        if (Exists(settings) && !overwrite)
         {
             return false;
         }
 
-        var model = Path.Combine(folder, Name + ".SemanticModel");
-        var report = Path.Combine(folder, Name + ".Report");
-        foreach (var generated in new[] { model, report })
+        // Written beside the old project first, then swapped in, so a project
+        // that cannot be replaced (a file open in Power BI Desktop, say) is
+        // left as it was rather than half-replaced.
+        var folder = FolderFor(settings);
+        var model = ModelFolder(settings) + ".new";
+        var report = ReportFolder(settings) + ".new";
+        foreach (var leftover in new[] { model, report })
         {
-            if (Directory.Exists(generated))
+            if (Directory.Exists(leftover))
             {
-                Directory.Delete(generated, recursive: true);
+                Directory.Delete(leftover, recursive: true);
             }
         }
 
         var relationships = Relationships(tables);
-
-        Save(ProjectFileFor(settings), ProjectFile);
-        Save(Path.Combine(folder, ".gitignore"), "**/.pbi/localSettings.json\n**/.pbi/cache.abf\n");
 
         Save(Path.Combine(model, "definition.pbism"), ModelProperties);
         Save(Path.Combine(model, "definition", "database.tmdl"), $"database\n\tcompatibilityLevel: {CompatibilityLevel}\n");
@@ -116,8 +128,112 @@ internal static class PowerBiProject
         Save(Path.Combine(report, "definition", "report.json"), Report);
         Save(Path.Combine(report, "definition", "pages", "pages.json"), Pages);
         Save(Path.Combine(report, "definition", "pages", PageName, "page.json"), Page);
+
+        var swapped = new List<(string Current, string Aside)>();
+        try
+        {
+            foreach (var current in new[] { ModelFolder(settings), ReportFolder(settings) })
+            {
+                if (Directory.Exists(current))
+                {
+                    var aside = current + ".old";
+                    if (Directory.Exists(aside))
+                    {
+                        Directory.Delete(aside, recursive: true);
+                    }
+
+                    Directory.Move(current, aside);
+                    swapped.Add((current, aside));
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            foreach (var (current, aside) in swapped)
+            {
+                Directory.Move(aside, current);
+            }
+
+            throw new SettingsException($"The Power BI project at {folder} is in use. Close it in Power BI Desktop and run the command again.");
+        }
+
+        Directory.Move(model, ModelFolder(settings));
+        Directory.Move(report, ReportFolder(settings));
+        Save(Path.Combine(folder, ".gitignore"), "**/.pbi/localSettings.json\n**/.pbi/cache.abf\n");
+        Save(ProjectFileFor(settings), ProjectFile);
+        foreach (var (_, aside) in swapped)
+        {
+            try
+            {
+                Directory.Delete(aside, recursive: true);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // Harmless: the old copy is no longer used.
+            }
+        }
+
         return true;
     }
+
+    /// <summary>
+    /// The columns each table of an existing project loads from its Parquet
+    /// file, read from the project's own definition. Columns the school or an
+    /// LLM calculated, and tables that do not come from a Parquet file, are left out.
+    /// </summary>
+    public static Dictionary<string, IReadOnlyList<Column>> ReadColumns(Settings settings)
+    {
+        var result = new Dictionary<string, IReadOnlyList<Column>>(StringComparer.Ordinal);
+        var tables = Path.Combine(ModelFolder(settings), "definition", "tables");
+        if (!Directory.Exists(tables))
+        {
+            return result;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(tables, "*.tmdl"))
+        {
+            var lines = File.ReadAllLines(file).Select(line => line.Trim()).ToList();
+            var name = lines.FirstOrDefault(line => line.StartsWith("table ", StringComparison.Ordinal));
+            if (name is null || !lines.Any(line => line.Contains(".parquet", StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            var columns = new List<Column>();
+            string? type = null;
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("column ", StringComparison.Ordinal) || line.StartsWith("measure ", StringComparison.Ordinal))
+                {
+                    type = null;
+                }
+                else if (line.StartsWith("dataType:", StringComparison.Ordinal))
+                {
+                    type = line["dataType:".Length..].Trim();
+                }
+                else if (line.StartsWith("sourceColumn:", StringComparison.Ordinal))
+                {
+                    columns.Add(new Column(Unquote(line["sourceColumn:".Length..].Trim()), KindOf(type)));
+                }
+            }
+
+            result[Unquote(name["table ".Length..].Trim())] = columns;
+        }
+
+        return result;
+    }
+
+    private static string Unquote(string name) =>
+        name.Length >= 2 && name[0] == '\'' && name[^1] == '\'' ? name[1..^1].Replace("''", "'", StringComparison.Ordinal) : name;
+
+    private static ColumnKind KindOf(string? dataType) => dataType switch
+    {
+        "int64" => ColumnKind.Integer,
+        "double" or "decimal" => ColumnKind.Number,
+        "boolean" => ColumnKind.Logical,
+        "dateTime" => ColumnKind.DateTime,
+        _ => ColumnKind.Text,
+    };
 
     /// <summary>
     /// The relationships, most important first. Power BI refuses a model in
@@ -170,17 +286,19 @@ internal static class PowerBiProject
     {
         foreach (var child in tables)
         {
+            // The nearest table the child links to. A list inside a record that
+            // has no id of its own links past it, to the next record up that has one.
             var parent = tables
                 .Where(candidate => child.Name.StartsWith(candidate.Name + "_", StringComparison.Ordinal))
                 .OrderByDescending(candidate => candidate.Name.Length)
-                .FirstOrDefault();
+                .FirstOrDefault(candidate => has(child.Name, Flattener.Singular(candidate.Name) + "_id") && has(candidate.Name, "id"));
             if (parent is null)
             {
                 continue;
             }
 
             var link = Flattener.Singular(parent.Name) + "_id";
-            if (has(child.Name, link) && !Lookups.Any(lookup => lookup.FromTable == child.Name && lookup.FromColumn == link))
+            if (!Lookups.Any(lookup => lookup.FromTable == child.Name && lookup.FromColumn == link))
             {
                 yield return (child.Name, link, parent.Name, "id", true);
             }
@@ -238,9 +356,12 @@ internal static class PowerBiProject
         text.Append("\t\tmode: import\n");
         text.Append("\t\tsource =\n");
         text.Append("\t\t\t\tlet\n");
-        text.Append($"\t\t\t\t\tSource = Parquet.Document(File.Contents(DataFolder & \"\\{table.Name}.parquet\"))\n");
+        text.Append($"\t\t\t\t\tSource = Parquet.Document(File.Contents(DataFolder & \"\\{table.Name}.parquet\")),\n");
+        // A column that is no longer in the file loads as empty rather than failing the refresh.
+        var names = string.Join(", ", table.Columns.Select(column => "\"" + column.Name.Replace("\"", "\"\"", StringComparison.Ordinal) + "\""));
+        text.Append($"\t\t\t\t\tColumns = Table.SelectColumns(Source, {{{names}}}, MissingField.UseNull)\n");
         text.Append("\t\t\t\tin\n");
-        text.Append("\t\t\t\t\tSource\n");
+        text.Append("\t\t\t\t\tColumns\n");
         return text.ToString();
     }
 

@@ -619,9 +619,9 @@ Anon.Value = (value as any, seed as text, parent as text, tableKey as text) as a
     else
         value;
 
-Anon.Record = (source as record, seed as text, parent as text, tableKey as text) as record =>
+Anon.Record = (source as record, seed as text, parent as text, tableKey as text, optional sameAs as text) as record =>
     let
-        ownSeed = Anon.SeedFor(source, seed, parent),
+        ownSeed = if sameAs <> null then sameAs else Anon.SeedFor(source, seed, parent),
         isPerson = Anon.IsPerson(source),
         names = Record.FieldNames(source),
         values = List.Transform(
@@ -632,7 +632,9 @@ Anon.Record = (source as record, seed as text, parent as text, tableKey as text)
                     rule = Anon.RuleFor(parent, key, isPerson)
                 in
                     if rule = "Sid" then Mask.Sid(value, source, ownSeed)
-                    else if rule <> null then Anon.Apply(rule, value, ownSeed & "|" & key, key, tableKey)
+                    else if rule <> null then Anon.Apply(rule, value, ownSeed & "|" & key, key, tableKey, ownSeed)
+                    // A parent's alumnus record is the parent, so it gets the parent's fake name.
+                    else if key = "alumnus" and value is record then Anon.Record(value, ownSeed, key, tableKey, ownSeed)
                     else Anon.Value(value, ownSeed & "/" & key, key, tableKey)
         )
     in
@@ -652,7 +654,7 @@ Anon.SeedFor = (source as record, seed as text, parent as text) as text =>
         else seed;
 
 Anon.IsPerson = (source as record) as logical =>
-    Record.HasFields(source, "first_name") or Record.HasFields(source, "last_name");
+    Record.HasFields(source, "first_name") or Record.HasFields(source, "last_name") or Record.HasFields(source, "full_name");
 
 Anon.RuleFor = (parent as text, key as text, isPerson as logical) as nullable text =>
     let
@@ -672,7 +674,7 @@ Anon.RuleFor = (parent as text, key as text, isPerson as logical) as nullable te
         else if Text.EndsWith(key, "_other") then "Redact"
         else null;
 
-Anon.Apply = (rule as text, value as any, seed as text, key as text, tableKey as text) as any =>
+Anon.Apply = (rule as text, value as any, seed as text, key as text, tableKey as text, recordSeed as text) as any =>
     if value = null then null
     else if rule = "Null" then null
     else if rule = "EmptyJson" then (if value is list then {} else if value is record then [] else "{}")
@@ -681,20 +683,22 @@ Anon.Apply = (rule as text, value as any, seed as text, key as text, tableKey as
     else if value is list then
         List.Transform(
             List.Positions(value),
-            (index) => Anon.Apply(rule, value{index}, seed & "/" & Text.From(index), key, tableKey)
+            (index) => Anon.Apply(rule, value{index}, seed & "/" & Text.From(index), key, tableKey, recordSeed)
         )
-    // A structured value under a masked key is walked like any other record.
-    else if value is record then Anon.Record(value, seed, key, tableKey)
-    else Anon.Scalar(rule, Text.From(value), seed);
+    // A record where text was expected: nothing in it is kept.
+    else if value is record then Mask.RedactLeaves(value)
+    else Anon.Scalar(rule, Text.From(value), seed, key, recordSeed);
 
 // Empty stays empty, as in the SQL masks.
-Anon.Scalar = (rule as text, value as text, seed as text) as text =>
+Anon.Scalar = (rule as text, value as text, seed as text, key as text, recordSeed as text) as text =>
     if rule = "Blank" or value = "" then ""
-    else if rule = "FirstName" then Mask.Pick(Names.First, seed, value)
-    else if rule = "LastName" then Mask.Pick(Names.Last, seed, value)
-    else if rule = "FullName" then Mask.FullName(value, seed)
-    else if rule = "MobilePhone" then Mask.Phone(value, seed, "mobile")
-    else if rule = "HomePhone" or rule = "BusinessPhone" then Mask.Phone(value, seed, "landline")
+    else if rule = "FirstName" then Mask.Pick(Names.First, seed)
+    else if rule = "LastName" then Mask.Pick(Names.Last, seed)
+    // full_name is the record's own person, so it matches their first_name and
+    // last_name. Other name fields, such as case_manager_name, are someone else.
+    else if rule = "FullName" then Mask.FullName(if key = "full_name" then recordSeed else seed)
+    else if rule = "MobilePhone" then Mask.Phone(seed, "mobile")
+    else if rule = "HomePhone" or rule = "BusinessPhone" then Mask.Phone(seed, "landline")
     else if rule = "Email" then Mask.Email(seed)
     else if rule = "Digits" then Mask.Digits(value, seed)
     else if rule = "Redact" then "Redacted"
@@ -740,7 +744,7 @@ Anon.RuleViolations = (rule as text, value as any, path as text, key as text, ta
     else if rule = "RedactAll" then (if value = Mask.RedactLeaves(value) then {} else {path})
     else if value is list then
         List.Combine(List.Transform(value, (item) => Anon.RuleViolations(rule, item, path & "[]", key, tableKey)))
-    else if value is record then Anon.Violations(value, path, key, tableKey)
+    else if value is record then (if value = Mask.RedactLeaves(value) then {} else {path})
     else if not (value is text) then {path}
     else if Anon.Conforms(rule, value) then {}
     else {path};
@@ -755,10 +759,9 @@ Anon.Conforms = (rule as text, value as text) as logical =>
             parts = Text.Split(value, " ")
         in
             List.Count(parts) = 2 and List.Contains(Names.First, parts{0}) and List.Contains(Names.Last, parts{1})
-    else if rule = "MobilePhone" then
-        Text.StartsWith(value, "+6143") and Text.Length(value) = 12 and Mask.IsDigits(Text.Middle(value, 1))
+    else if rule = "MobilePhone" then List.Contains(Mask.FictionalMobiles, value)
     else if rule = "HomePhone" or rule = "BusinessPhone" then
-        List.Contains(Mask.LandlinePrefixes, Text.Start(value, 4)) and Text.Length(value) = 12 and Mask.IsDigits(Text.Middle(value, 1))
+        Text.Length(value) = 12 and List.Contains(Mask.FictionalLandlinePrefixes, Text.Start(value, 8)) and Mask.IsDigits(Text.Middle(value, 8))
     else if rule = "Email" then
         List.AnyTrue(List.Transform(Mask.EmailDomains, (domain) => Text.EndsWith(value, "@" & domain)))
     else if rule = "Digits" then Mask.IsDigits(value)
@@ -792,6 +795,9 @@ Anon.KeyRules = [
     parish_priest_name = "FullName",
     student_profile_name = "FullName",
     parent_name = "FullName",
+    // Staff named on a campus
+    principal_name = "FullName",
+    registrar_name = "FullName",
     // Built from the real surname and first initial
     sid = "Sid",
     // Contact
@@ -933,6 +939,8 @@ Anon.ContextRules = [
     #"document_group.note" = "Redact",
     #"document_groups.note" = "Redact",
     #"agreement_documents.link" = "FileKey",
+    // Written by staff for families coming to an interview
+    #"location.hint_text" = "Redact",
     #"email_log.subject" = "Redact"
 ];
 
@@ -942,22 +950,25 @@ Anon.Keep = {"campuses.email", "campus.email"};
 // ── Anonymisation: masks ─────────────────────────────────────────────────────
 
 Mask.EmailDomains = {"example.com", "example.net", "example.org"};
-Mask.LandlinePrefixes = {"+612", "+613", "+617", "+618"};
+// Numbers the ACMA sets aside for fiction, so a fake number never rings a real person.
+Mask.FictionalMobiles = {
+    "+61491570006", "+61491570156", "+61491570157", "+61491570158", "+61491570159", "+61491570110", "+61491570313",
+    "+61491570737", "+61491571266", "+61491571491", "+61491571804", "+61491572549", "+61491572665", "+61491572983",
+    "+61491573770", "+61491573087", "+61491574118", "+61491574632", "+61491575254", "+61491575789", "+61491576398"
+};
+Mask.FictionalLandlinePrefixes = {"+6125550", "+6127010", "+6135550", "+6137010", "+6175550", "+6177010", "+6185550", "+6187010"};
+// Extensions kept on a removed file's name. Anything else after a dot may be part of a name.
+Mask.FileExtensions = {
+    "pdf", "doc", "docx", "xls", "xlsx", "csv", "txt", "rtf", "odt", "ods", "ppt", "pptx", "pages",
+    "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "heic", "heif", "webp", "svg",
+    "mp4", "mov", "m4a", "mp3", "wav", "zip"
+};
 Mask.Alphanumeric = Text.ToList("abcdefghijklmnopqrstuvwxyz0123456789");
 
 Mask.Bytes = (seed as text) as list =>
     Binary.ToList(Crypto.CreateHash(CryptoAlgorithm.SHA256, Text.ToBinary(seed, TextEncoding.Utf8)));
 
 Mask.IsDigits = (value as text) as logical => Text.Select(value, {"0".."9"}) = value;
-
-// Shifts every digit by one, so the result can never equal the input.
-Mask.ShiftDigits = (value as text) as text =>
-    Text.Combine(
-        List.Transform(
-            Text.ToList(value),
-            (char) => if Mask.IsDigits(char) then Text.From(Number.Mod(Number.FromText(char) + 1, 10)) else char
-        )
-    );
 
 Mask.DigitString = (bytes as list, offset as number, length as number) as text =>
     Text.Combine(
@@ -967,35 +978,24 @@ Mask.DigitString = (bytes as list, offset as number, length as number) as text =
         )
     );
 
-// Never returns the original value.
-Mask.Pick = (items as list, seed as text, original as text) as text =>
+// Fake values never look at the real value, so they say nothing about it. By
+// chance one can be the same as the real value.
+Mask.Pick = (items as list, seed as text) as text =>
     let
-        bytes = Mask.Bytes(seed),
-        count = List.Count(items),
-        index = Number.Mod(bytes{0} * 65536 + bytes{1} * 256 + bytes{2}, count),
-        candidate = items{index}
+        bytes = Mask.Bytes(seed)
     in
-        if Text.Lower(candidate) = Text.Lower(Text.Trim(original)) then items{Number.Mod(index + 1, count)}
-        else candidate;
+        items{Number.Mod(bytes{0} * 65536 + bytes{1} * 256 + bytes{2}, List.Count(items))};
 
-Mask.FullName = (original as text, seed as text) as text =>
-    let
-        parts = Text.Split(Text.Trim(original), " "),
-        first = parts{0},
-        last = if List.Count(parts) > 1 then parts{1} else ""
-    in
-        Mask.Pick(Names.First, seed & "|first", first) & " " & Mask.Pick(Names.Last, seed & "|last", last);
+// The same as the first_name and last_name fields with this seed would get.
+Mask.FullName = (seed as text) as text =>
+    Mask.Pick(Names.First, seed & "|first_name") & " " & Mask.Pick(Names.Last, seed & "|last_name");
 
-Mask.Phone = (original as text, seed as text, kind as text) as text =>
+Mask.Phone = (seed as text, kind as text) as text =>
     let
-        bytes = Mask.Bytes(seed),
-        leading = Text.From(1 + Number.Mod(bytes{1}, 9)),
-        candidate =
-            if kind = "mobile" then "+6143" & leading & Mask.DigitString(bytes, 2, 6)
-            else Mask.LandlinePrefixes{Number.Mod(bytes{0}, 4)} & leading & Mask.DigitString(bytes, 2, 7)
+        bytes = Mask.Bytes(seed)
     in
-        if candidate = original then Text.Start(candidate, 11) & Mask.ShiftDigits(Text.End(candidate, 1))
-        else candidate;
+        if kind = "mobile" then Mask.FictionalMobiles{Number.Mod(bytes{0}, List.Count(Mask.FictionalMobiles))}
+        else Mask.FictionalLandlinePrefixes{Number.Mod(bytes{0}, List.Count(Mask.FictionalLandlinePrefixes))} & Mask.DigitString(bytes, 1, 4);
 
 Mask.Email = (seed as text) as text =>
     let
@@ -1006,11 +1006,7 @@ Mask.Email = (seed as text) as text =>
         name & "@" & domain;
 
 // Random digits of the same length as the original.
-Mask.Digits = (original as text, seed as text) as text =>
-    let
-        candidate = Mask.DigitString(Mask.Bytes(seed), 0, Text.Length(original))
-    in
-        if candidate = original then Mask.ShiftDigits(candidate) else candidate;
+Mask.Digits = (original as text, seed as text) as text => Mask.DigitString(Mask.Bytes(seed), 0, Text.Length(original));
 
 // The real sid is built from the date of birth, entry grade, entry year,
 // surname and first initial. This rebuilds it from the record's own kept
@@ -1026,8 +1022,8 @@ Mask.Sid = (original as any, source as record, seed as text) as any =>
                     value = Record.FieldOrDefault(source, name, null)
                 in
                     if value = null then "" else Text.From(value),
-            first = Mask.Pick(Names.First, seed & "|first_name", field("first_name")),
-            last = Mask.Pick(Names.Last, seed & "|last_name", field("last_name")),
+            first = Mask.Pick(Names.First, seed & "|first_name"),
+            last = Mask.Pick(Names.Last, seed & "|last_name"),
             bytes = Mask.Bytes(seed & "|sid"),
             counter = Text.From(1 + Number.Mod(bytes{0} * 256 + bytes{1}, 999)),
             kept = List.Select({Text.Remove(field("dob"), "-"), field("entry_grade"), field("entry_year")}, each _ <> "")
@@ -1040,26 +1036,24 @@ Mask.EmptyValues = (value as any) as any =>
     else if value is list then {}
     else null;
 
-// Redacts every piece of text inside a value, however it is nested.
+// Redacts every piece of text and every number inside a value, however it is
+// nested. Yes/no answers are kept.
 Mask.RedactLeaves = (value as any) as any =>
     if value is record then
         Record.FromList(List.Transform(Record.FieldValues(value), Mask.RedactLeaves), Record.FieldNames(value))
     else if value is list then List.Transform(value, Mask.RedactLeaves)
     else if value is text and value <> "" then "Redacted"
+    else if value is number then "Redacted"
     else value;
 
-// ".pdf" from a file key, file name or URL; "" when there is no short extension.
+// ".pdf" from a file key, file name or URL; "" unless it is a known file extension.
 Mask.Extension = (value as text) as text =>
     let
         path = List.First(Text.SplitAny(value, "?#")),
         name = List.Last(Text.Split(path, "/")),
-        extension = if Text.Contains(name, ".") then List.Last(Text.Split(name, ".")) else "",
-        valid =
-            Text.Length(extension) >= 1
-            and Text.Length(extension) <= 5
-            and Text.Select(extension, {"a".."z", "A".."Z", "0".."9"}) = extension
+        extension = if Text.Contains(name, ".") then List.Last(Text.Split(name, ".")) else ""
     in
-        if valid then "." & extension else "";
+        if List.Contains(Mask.FileExtensions, Text.Lower(extension)) then "." & extension else "";
 
 Names.First = {
     "Adam", "Aiden", "Alex", "Alice", "Amelia", "Andrew", "Anna", "Archie", "Aria", "Ava",
@@ -1095,14 +1089,15 @@ Names.Last = {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // Calls producer(attempt) until it returns a non-null value, waiting
-// interval(attempt) before each call, for at most count attempts.
+// interval(attempt) before each call, for at most count attempts. Returns the
+// first non-null value, or null when every attempt returned null.
 Value.WaitFor = (producer as function, interval as function, optional count as number) as any =>
     let
         list = List.Generate(
             () => {0, null},
-            (state) => state{0} <> null and (count = null or state{0} < count),
+            (state) => state{0} <> null,
             (state) =>
-                if state{1} <> null then {null, state{1}}
+                if state{1} <> null or (count <> null and state{0} >= count) then {null, state{1}}
                 else {1 + state{0}, Function.InvokeAfter(() => producer(state{0}), interval(state{0}))},
             (state) => state{1}
         )

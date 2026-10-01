@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace EnrolHQ.Sync.Anonymise;
 
@@ -12,12 +13,18 @@ namespace EnrolHQ.Sync.Anonymise;
 /// unchanged. If one contains the surname or email address of anyone named in
 /// the same record, the whole value is redacted.
 ///
+/// Surnames come from every field with a surname, full name or email rule.
+/// Each part of a hyphenated or multi-word surname counts on its own. Surnames
+/// of five letters or more match anywhere in the text; shorter ones (Lee, Ng,
+/// Chen) only as a whole word, so Lee does not match Leeds.
+///
 /// First names are not matched. Too many are ordinary words (Grace, Hope,
 /// Summer), and redacting on those would remove data for no benefit.
 /// </summary>
 internal static class SafetyNet
 {
-    private const int ShortestSecret = 5;
+    private const int MatchAnywhereFrom = 5;
+    private const int ShortestSecret = 2;
 
     /// <summary>Redacts in place.</summary>
     /// <param name="original">The record as the API returned it.</param>
@@ -27,25 +34,38 @@ internal static class SafetyNet
     public static List<string> Apply(JsonObject original, JsonObject masked, string table)
     {
         var secrets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        CollectSecrets(original, masked, secrets);
+        CollectSecrets(original, masked, table, secrets);
         var redacted = new List<string>();
         if (secrets.Count > 0)
         {
-            Walk(original, masked, table, [.. secrets], redacted);
+            var matchers = secrets.Select(Matcher).ToList();
+            Walk(original, masked, table, table, matchers, redacted);
         }
 
         return redacted;
+    }
+
+    private static Func<string, bool> Matcher(string secret)
+    {
+        if (secret.Length >= MatchAnywhereFrom || secret.Contains('@'))
+        {
+            return text => text.Contains(secret, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var word = new Regex($@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(secret)}(?![\p{{L}}\p{{N}}])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return word.IsMatch;
     }
 
     /// <summary>
     /// Surnames and email addresses that masking replaced. One that the rules
     /// kept on purpose, such as a campus's own email address, is not a secret.
     /// </summary>
-    private static void CollectSecrets(JsonNode? original, JsonNode? masked, HashSet<string> secrets)
+    private static void CollectSecrets(JsonNode? original, JsonNode? masked, string parent, HashSet<string> secrets)
     {
         switch (original, masked)
         {
             case (JsonObject originalRecord, JsonObject maskedRecord):
+                var isPerson = originalRecord.ContainsKey("first_name") || originalRecord.ContainsKey("last_name") || originalRecord.ContainsKey("full_name");
                 foreach (var (key, field) in originalRecord)
                 {
                     var maskedField = maskedRecord[key];
@@ -55,14 +75,14 @@ internal static class SafetyNet
                         var replaced = maskedField is not JsonValue maskedLeaf
                             || maskedLeaf.GetValueKind() != JsonValueKind.String
                             || maskedLeaf.GetValue<string>() != leaf.GetValue<string>();
-                        var parts = key switch
+                        var parts = replaced ? Rules.For(parent, key, isPerson) switch
                         {
-                            _ when !replaced => [],
-                            "last_name" or "email" => [text],
+                            Rule.Email => [text],
+                            Rule.LastName => Words(text),
                             // The surname is every word after the first.
-                            "full_name" => text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1),
-                            _ => Enumerable.Empty<string>(),
-                        };
+                            Rule.FullName => Words(text).Skip(1),
+                            _ => [],
+                        } : [];
                         foreach (var part in parts.Where(part => part.Length >= ShortestSecret))
                         {
                             secrets.Add(part);
@@ -70,7 +90,7 @@ internal static class SafetyNet
                     }
                     else
                     {
-                        CollectSecrets(field, maskedField, secrets);
+                        CollectSecrets(field, maskedField, key, secrets);
                     }
                 }
 
@@ -78,34 +98,54 @@ internal static class SafetyNet
             case (JsonArray originalList, JsonArray maskedList) when originalList.Count == maskedList.Count:
                 for (var index = 0; index < originalList.Count; index++)
                 {
-                    CollectSecrets(originalList[index], maskedList[index], secrets);
+                    CollectSecrets(originalList[index], maskedList[index], parent, secrets);
                 }
 
                 break;
         }
     }
 
-    private static void Walk(JsonNode? original, JsonNode? masked, string path, string[] secrets, List<string> redacted)
+    /// <summary>"Whitlock-Parker" gives Whitlock-Parker, Whitlock and Parker.</summary>
+    private static IEnumerable<string> Words(string text)
+    {
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var word in words)
+        {
+            yield return word;
+            if (word.Contains('-'))
+            {
+                foreach (var piece in word.Split('-', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    yield return piece;
+                }
+            }
+        }
+    }
+
+    private static void Walk(JsonNode? original, JsonNode? masked, string path, string parent, List<Func<string, bool>> secrets, List<string> redacted)
     {
         switch (original, masked)
         {
             case (JsonObject originalRecord, JsonObject maskedRecord):
+                var isPerson = originalRecord.ContainsKey("first_name") || originalRecord.ContainsKey("last_name") || originalRecord.ContainsKey("full_name");
                 foreach (var (key, field) in originalRecord)
                 {
-                    if (!maskedRecord.TryGetPropertyValue(key, out var maskedField))
+                    // A field with a rule is already masked. A fake surname can
+                    // by chance be the real one; redacting it would give that away.
+                    if (Rules.For(parent, key, isPerson) is not null || !maskedRecord.TryGetPropertyValue(key, out var maskedField))
                     {
                         continue;
                     }
 
                     var fieldPath = $"{path}.{key}";
-                    if (IsKeptText(field, maskedField, key, out var text) && ContainsSecret(text, secrets))
+                    if (IsKeptText(field, maskedField, key, out var text) && secrets.Any(matches => matches(text)))
                     {
                         maskedRecord[key] = Masks.Redacted;
                         redacted.Add(fieldPath);
                     }
                     else
                     {
-                        Walk(field, maskedField, fieldPath, secrets, redacted);
+                        Walk(field, maskedField, fieldPath, key, secrets, redacted);
                     }
                 }
 
@@ -113,14 +153,14 @@ internal static class SafetyNet
             case (JsonArray originalList, JsonArray maskedList) when originalList.Count == maskedList.Count:
                 for (var index = 0; index < originalList.Count; index++)
                 {
-                    if (IsKeptText(originalList[index], maskedList[index], "", out var text) && ContainsSecret(text, secrets))
+                    if (IsKeptText(originalList[index], maskedList[index], "", out var text) && secrets.Any(matches => matches(text)))
                     {
                         maskedList[index] = Masks.Redacted;
                         redacted.Add(path + "[]");
                     }
                     else
                     {
-                        Walk(originalList[index], maskedList[index], path + "[]", secrets, redacted);
+                        Walk(originalList[index], maskedList[index], path + "[]", parent, secrets, redacted);
                     }
                 }
 
@@ -150,7 +190,4 @@ internal static class SafetyNet
             && !key.EndsWith("_id", StringComparison.Ordinal)
             && !Guid.TryParse(text, out _);
     }
-
-    private static bool ContainsSecret(string text, string[] secrets) =>
-        secrets.Any(secret => text.Contains(secret, StringComparison.OrdinalIgnoreCase));
 }

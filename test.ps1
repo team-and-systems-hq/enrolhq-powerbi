@@ -61,6 +61,7 @@ $credential = @{
 $set = $credential | & $pqtest set-credential -e $mez -q $queries[0].FullName | ConvertFrom-Json
 if ($set.Status -ne 'Success') { throw "Could not store the credential: $($set.Message)" }
 
+$failed = 0
 foreach ($query in $queries) {
     $started = Get-Date
     $result = (& $pqtest run-test -e $mez -q $query.FullName | ConvertFrom-Json)[0]
@@ -70,7 +71,11 @@ foreach ($query in $queries) {
         if ($ShowRows) { $result.Output | ConvertTo-Json -Depth 8 }
     }
     else {
+        $failed++
         Write-Output ("FAIL  {0,-32} {1}" -f $query.BaseName, $result.Error.Message)
-        if ($result.Error.Details) { $result.Error.Details | ConvertTo-Json -Depth 4 }
+        # Error details can quote values from the rows, so they follow -ShowRows.
+        if ($ShowRows -and $result.Error.Details) { $result.Error.Details | ConvertTo-Json -Depth 4 }
     }
 }
+
+if ($failed -gt 0) { throw "$failed test quer$(if ($failed -eq 1) { 'y' } else { 'ies' }) failed." }

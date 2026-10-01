@@ -1,8 +1,14 @@
+# Settings hold the API token.
 .env
+.env.*
+!.env.example
 bin/
 tools/
 logs/
 data/
+# A local copy kept somewhere else in the repository by ENROLHQ_DATA_DIR
+enrolhq.db*
+*.parquet
 sync/**/bin/
 sync/**/obj/
 # Internal documents. This repository is public.

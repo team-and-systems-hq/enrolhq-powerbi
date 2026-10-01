@@ -22,6 +22,14 @@ internal sealed class FakeApi : HttpMessageHandler
 
     public DateTimeOffset Now { get; private set; } = new(2026, 9, 29, 9, 0, 0, TimeSpan.Zero);
 
+    /// <summary>How far EnrolHQ's clock is behind this computer's. Sent in each answer's Date header.</summary>
+    public TimeSpan ServerBehind { get; set; }
+
+    /// <summary>Runs before each answer to a data request, for changing the records mid-download.</summary>
+    public Action<string>? BeforeAnswer { get; set; }
+
+    public List<JsonObject> Records(string path) => _records[path];
+
     public void Serve(string path, IEnumerable<JsonObject> records) => _records[path] = records.ToList();
 
     public void Serve(string path, int count) =>
@@ -105,6 +113,16 @@ internal sealed class FakeApi : HttpMessageHandler
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
         }
 
+        BeforeAnswer?.Invoke(path);
+
+        // applications/{id}/ answers one record.
+        var parts = path.TrimEnd('/').Split('/');
+        if (parts.Length == 2 && _records.TryGetValue(parts[0] + "/", out var all))
+        {
+            var one = all.FirstOrDefault(record => (string?)record["id"] == parts[1]);
+            return Task.FromResult(one is null ? new HttpResponseMessage(HttpStatusCode.NotFound) : Dated(Json(one.DeepClone())));
+        }
+
         if (!_records.TryGetValue(path, out var records))
         {
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
@@ -116,14 +134,26 @@ internal sealed class FakeApi : HttpMessageHandler
         var matching = query["updated_after"] is { } after
             ? records.Where(record => string.CompareOrdinal((string?)record["updated_at"], after) >= 0).ToList()
             : records;
+        if (page > 1 && (page - 1) * size >= matching.Count)
+        {
+            // As EnrolHQ does for a page past the end.
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("""{"detail":"Invalid page."}""") });
+        }
+
         var results = matching.Skip((page - 1) * size).Take(size).Select(record => record.DeepClone()).ToArray();
-        return Task.FromResult(Json(new JsonObject
+        return Task.FromResult(Dated(Json(new JsonObject
         {
             ["count"] = matching.Count,
             ["next"] = page * size < matching.Count ? "more" : null,
             ["previous"] = null,
             ["results"] = new JsonArray(results),
-        }));
+        })));
+    }
+
+    private HttpResponseMessage Dated(HttpResponseMessage response)
+    {
+        response.Headers.Date = Now - ServerBehind;
+        return response;
     }
 
     private static HttpResponseMessage Json(JsonNode body) =>
