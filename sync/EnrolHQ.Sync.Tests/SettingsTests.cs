@@ -8,12 +8,19 @@ public sealed class SettingsTests : IDisposable
 
     public void Dispose() => Directory.Delete(_folder, recursive: true);
 
-    private Settings Load(params string[] lines)
+    private static readonly Func<string, string?> NoEnvironment = _ => null;
+
+    private Settings Load(params string[] lines) => Load(NoEnvironment, lines);
+
+    private Settings Load(Func<string, string?> environment, params string[] lines)
     {
         var path = Path.Combine(_folder, ".env");
         File.WriteAllLines(path, lines);
-        return Settings.Load(path);
+        return Settings.Load(path, environment);
     }
+
+    private static Func<string, string?> Variables(params (string Name, string Value)[] variables) =>
+        name => variables.Where(variable => variable.Name == name).Select(variable => variable.Value).FirstOrDefault();
 
     [Fact]
     public void Anonymises_unless_told_not_to()
@@ -82,5 +89,37 @@ public sealed class SettingsTests : IDisposable
         var error = Assert.Throws<SettingsException>(() => Load("ENROLHQ_INSTANCE=enrol.school.edu.au"));
 
         Assert.Contains("ENROLHQ_API_TOKEN", error.Message);
+    }
+
+    [Fact]
+    public void Takes_the_token_from_the_environment_so_it_need_not_be_in_a_file()
+    {
+        var settings = Load(Variables(("ENROLHQ_API_TOKEN", "from-environment")), "ENROLHQ_INSTANCE=enrol.school.edu.au");
+
+        Assert.Equal("from-environment", settings.ApiToken);
+        Assert.Equal("enrol.school.edu.au", settings.Instance);
+    }
+
+    [Fact]
+    public void An_environment_variable_wins_over_the_file()
+    {
+        var settings = Load(
+            Variables(("ENROLHQ_INSTANCE", "enrol.other.edu.au"), ("ENROLHQ_API_TOKEN", "from-environment")),
+            "ENROLHQ_INSTANCE=enrol.school.edu.au",
+            "ENROLHQ_API_TOKEN=from-file");
+
+        Assert.Equal("enrol.other.edu.au", settings.Instance);
+        Assert.Equal("from-environment", settings.ApiToken);
+    }
+
+    [Fact]
+    public void An_unclear_anonymise_value_in_the_environment_is_refused_too()
+    {
+        var environment = Variables(("ENROLHQ_ANONYMISE", "off"));
+
+        var error = Assert.Throws<SettingsException>(
+            () => Load(environment, "ENROLHQ_INSTANCE=enrol.school.edu.au", "ENROLHQ_API_TOKEN=secret"));
+
+        Assert.Contains("must be yes or no", error.Message);
     }
 }

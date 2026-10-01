@@ -25,7 +25,7 @@ Needs Windows, the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0
 
 The first download takes 30 to 60 minutes for a school with about 10,000 applications; nearly all of that is the full application records. Later runs fetch only the applications that changed.
 
-## Settings (`.env`)
+## Settings
 
 | Setting | Value |
 | --- | --- |
@@ -33,6 +33,19 @@ The first download takes 30 to 60 minutes for a school with about 10,000 applica
 | `ENROLHQ_API_TOKEN` | The school's API token |
 | `ENROLHQ_ANONYMISE` | `yes` (default) or `no`. Anything else is refused |
 | `ENROLHQ_DATA_DIR` | Where to keep the local copy. Default: `data` beside the `.env` file |
+
+Each setting can also be given as an environment variable of the same name. An environment variable wins over the `.env` file, and with all of them set no `.env` file is needed; the local copy then goes in a `data` folder in the current folder.
+
+## Security
+
+- **Where it connects.** Only to `https://<ENROLHQ_INSTANCE>/api/v2/`. It sends nothing anywhere else and has no telemetry.
+- **What it does there.** It reads. Every request is a `GET`, apart from the one `POST` that signs in.
+- **The API token.** In `.env` the token is plain text, so limit who can read the file to the account that runs the tool:
+  ```
+  icacls .env /inheritance:r /grant:r "%USERNAME%:F"
+  ```
+  To keep the token out of files altogether, leave it out of `.env` and have whatever starts the tool set the `ENROLHQ_API_TOKEN` environment variable, for example from a secrets manager. The token is not accepted as a command-line option, because other programs on the machine can see a command line and it is saved in shell history and scheduled task definitions. The token is never written to the console, the logs or the local copy.
+- **The local copy.** With `ENROLHQ_ANONYMISE=no` the `data\<school>\real` folder holds real personal data; protect it as you would the school's other student records. An anonymised copy still needs care, see [Kept on purpose](#kept-on-purpose).
 
 ## The sync tool
 
