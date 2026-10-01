@@ -5,6 +5,9 @@ logs/
 data/
 sync/**/bin/
 sync/**/obj/
+# Internal documents. This repository is public.
+docs/*.docx
+docs/*.pdf
 TestResults/
 .vs/
 *.user
