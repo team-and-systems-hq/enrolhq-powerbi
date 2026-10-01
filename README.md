@@ -40,12 +40,14 @@ Each setting can also be given as an environment variable of the same name. An e
 
 - **Where it connects.** Only to `https://<ENROLHQ_INSTANCE>/api/v2/`. It sends nothing anywhere else and has no telemetry.
 - **What it does there.** It reads. Every request is a `GET`, apart from the one `POST` that signs in.
-- **The API token.** In `.env` the token is plain text, so limit who can read the file to the account that runs the tool:
+- **The API token.** In `.env` the token is plain text, so limit who can read the file to the account that runs the tool. In Command Prompt, signed in as that account:
   ```
   icacls .env /inheritance:r /grant:r "%USERNAME%:F"
   ```
+  In PowerShell, write `"${env:USERNAME}:F"` in place of `"%USERNAME%:F"`.
   To keep the token out of files altogether, leave it out of `.env` and have whatever starts the tool set the `ENROLHQ_API_TOKEN` environment variable, for example from a secrets manager. The token is not accepted as a command-line option, because other programs on the machine can see a command line and it is saved in shell history and scheduled task definitions. The token is never written to the console, the logs or the local copy.
 - **The local copy.** With `ENROLHQ_ANONYMISE=no` the `data\<school>\real` folder holds real personal data; protect it as you would the school's other student records. An anonymised copy still needs care, see [Kept on purpose](#kept-on-purpose).
+- **Reporting a problem.** To report a security problem privately, use **Report a vulnerability** on this repository's Security tab on GitHub.
 
 ## The sync tool
 
