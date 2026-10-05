@@ -11,12 +11,16 @@ internal static class Exporter
 {
     public const string InfoTable = "sync_info";
 
-    public static async Task<List<ExportedTable>> ExportAsync(Settings settings, Store store, Reporter reporter, CancellationToken cancel)
+    /// <param name="newProject">
+    /// True when the project is about to be replaced, so the files follow the
+    /// data rather than the project being replaced.
+    /// </param>
+    public static async Task<List<ExportedTable>> ExportAsync(Settings settings, Store store, Reporter reporter, bool newProject, CancellationToken cancel)
     {
         // An existing project reads the tables and columns it was made with.
         // Each file keeps giving it those, so its refresh never fails because
         // a table has emptied or a column has come or gone.
-        var project = PowerBiProject.ReadColumns(settings);
+        var project = newProject ? new Dictionary<string, IReadOnlyList<Column>>(StringComparer.Ordinal) : PowerBiProject.ReadColumns(settings);
         var added = new List<string>();
         var retyped = new List<string>();
         var written = new List<ExportedTable>();

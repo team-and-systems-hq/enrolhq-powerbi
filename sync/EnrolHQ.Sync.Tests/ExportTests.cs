@@ -35,7 +35,7 @@ public sealed class ExportTests : IDisposable
 
     private async Task<List<ExportedTable>> ExportAndWriteProjectAsync()
     {
-        var tables = await Exporter.ExportAsync(_settings, _store, _reporter, CancellationToken.None);
+        var tables = await Exporter.ExportAsync(_settings, _store, _reporter, newProject: false, CancellationToken.None);
         PowerBiProject.Write(_settings, tables, overwrite: false);
         return tables;
     }
@@ -55,7 +55,7 @@ public sealed class ExportTests : IDisposable
         await ExportAndWriteProjectAsync();
 
         Hold("leads");
-        await Exporter.ExportAsync(_settings, _store, _reporter, CancellationToken.None);
+        await Exporter.ExportAsync(_settings, _store, _reporter, newProject: false, CancellationToken.None);
 
         var (columns, rows) = await ReadParquetAsync("leads");
         Assert.Equal(["id", "lead_status"], columns);
@@ -69,11 +69,24 @@ public sealed class ExportTests : IDisposable
         await ExportAndWriteProjectAsync();
 
         Hold("staff", """{"id":"s1","is_active":true,"roles":"r1"}""");
-        var tables = await Exporter.ExportAsync(_settings, _store, _reporter, CancellationToken.None);
+        var tables = await Exporter.ExportAsync(_settings, _store, _reporter, newProject: false, CancellationToken.None);
 
         var staff = tables.Single(table => table.Name == "staff");
         Assert.Equal(["id", "is_active", "nickname_count", "roles"], staff.Columns.Select(column => column.Name));
         Assert.Equal(ColumnKind.Integer, staff.Columns.Single(column => column.Name == "nickname_count").Kind);
+    }
+
+    [Fact]
+    public async Task Exporting_for_a_new_project_drops_columns_only_the_old_project_had()
+    {
+        Hold("staff", """{"id":"s1","is_active":true,"nickname_count":1}""");
+        await ExportAndWriteProjectAsync();
+
+        Hold("staff", """{"id":"s1","is_active":true}""");
+        var tables = await Exporter.ExportAsync(_settings, _store, _reporter, newProject: true, CancellationToken.None);
+
+        Assert.Equal(["id", "is_active"], tables.Single(table => table.Name == "staff").Columns.Select(column => column.Name));
+        Assert.Equal(["id", "is_active"], (await ReadParquetAsync("staff")).Columns);
     }
 
     [Fact]
@@ -83,7 +96,7 @@ public sealed class ExportTests : IDisposable
         await ExportAndWriteProjectAsync();
 
         Hold("forms", """{"id":"f1","fee":5}""");
-        var tables = await Exporter.ExportAsync(_settings, _store, _reporter, CancellationToken.None);
+        var tables = await Exporter.ExportAsync(_settings, _store, _reporter, newProject: false, CancellationToken.None);
 
         // The project reads fee as text; a number written as text loses nothing.
         Assert.Equal(ColumnKind.Text, tables.Single(table => table.Name == "forms").Columns.Single(column => column.Name == "fee").Kind);
@@ -122,7 +135,7 @@ public sealed class ExportTests : IDisposable
     [Fact]
     public async Task Exporting_an_empty_copy_says_so()
     {
-        var tables = await Exporter.ExportAsync(_settings, _store, _reporter, CancellationToken.None);
+        var tables = await Exporter.ExportAsync(_settings, _store, _reporter, newProject: false, CancellationToken.None);
 
         Assert.Empty(tables);
     }
