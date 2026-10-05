@@ -84,13 +84,13 @@ try
             break;
         case "export":
             WarnIfOutdated(settings, store, reporter);
-            WriteProject(settings, await Exporter.ExportAsync(settings, store, reporter, cancellation.Token), options, reporter);
+            WriteProject(settings, await Exporter.ExportAsync(settings, store, reporter, options.NewProject, cancellation.Token), options, reporter);
             break;
         default:
             var skipped = await SyncAsync(settings, store, options, reporter, cancellation.Token);
             // With --only or --skip, tables that were left out may still be out of date.
             WarnIfOutdated(settings, store, reporter);
-            WriteProject(settings, await Exporter.ExportAsync(settings, store, reporter, cancellation.Token), options, reporter);
+            WriteProject(settings, await Exporter.ExportAsync(settings, store, reporter, options.NewProject, cancellation.Token), options, reporter);
             if (skipped.Count > 0)
             {
                 reporter.Line($"Not downloaded, because EnrolHQ refused: {string.Join(", ", skipped)}. Check what the API token is allowed to read.");
