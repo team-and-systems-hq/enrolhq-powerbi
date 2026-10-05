@@ -127,6 +127,46 @@ public class FlattenerTests
     }
 
     [Fact]
+    public void A_record_keyed_by_ids_becomes_its_own_table_not_a_column_per_id()
+    {
+        var tables = Flatten(
+            "application_details",
+            """{"id":"a1","elements":{"3f2b8c1e-1111-4222-8333-444455556666":{"label":"Passport"},"99999999-1111-4222-8333-444455556666":{"label":"Visa"}}}""",
+            """{"id":"a2","elements":{}}""",
+            """{"id":"a3","elements":null}""");
+
+        var details = tables.Single(table => table.Name == "application_details");
+        var elements = tables.Single(table => table.Name == "application_details_elements");
+
+        Assert.Equal(["id", "elements_count"], details.Columns.Select(column => column.Name));
+        Assert.Equal(2L, Value(details, 0, "elements_count"));
+        Assert.Equal(0L, Value(details, 1, "elements_count"));
+        Assert.Null(Value(details, 2, "elements_count"));
+        Assert.Equal(["application_detail_id", "label", "id"], elements.Columns.Select(column => column.Name));
+        Assert.Equal("99999999-1111-4222-8333-444455556666", Value(elements, 1, "id"));
+        Assert.Equal("Visa", Value(elements, 1, "label"));
+        Assert.Equal("a1", Value(elements, 1, "application_detail_id"));
+    }
+
+    [Fact]
+    public void A_plain_value_keyed_by_id_keeps_its_key()
+    {
+        var tables = Flatten("applications", """{"id":"a1","answers":{"3f2b8c1e-1111-4222-8333-444455556666":true}}""");
+
+        var answers = tables.Single(table => table.Name == "applications_answers");
+        Assert.Equal("3f2b8c1e-1111-4222-8333-444455556666", Value(answers, 0, "id"));
+        Assert.Equal(true, Value(answers, 0, "value"));
+    }
+
+    [Fact]
+    public void An_empty_record_leaves_no_column_behind()
+    {
+        var table = Flatten("applications", """{"id":"a1","offer_delay_info":{}}""", """{"id":"a2","offer_delay_info":{"days":3}}""").Single();
+
+        Assert.Equal(["id", "offer_delay_info_days"], table.Columns.Select(column => column.Name).Order());
+    }
+
+    [Fact]
     public void Fields_missing_from_some_records_are_blank()
     {
         var table = Flatten("staff", """{"id":"s1","mobile_phone":"0400"}""", """{"id":"s2","roles":"admin"}""").Single();

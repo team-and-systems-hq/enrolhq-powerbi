@@ -28,6 +28,12 @@ internal sealed record FlatTable(string Name, IReadOnlyList<Column> Columns, IRe
 /// becomes comma-separated text, and also a table of its own when the values
 /// are ids.
 ///
+/// A record whose keys are all ids is a list in disguise: each key names an
+/// entry, not a field. It becomes a table of its own like a list, with the key
+/// as each entry's id, rather than ten columns for every id. One school's
+/// custom_form_documents_elements held over a thousand ids, which as columns
+/// made a table too wide for Power BI to load.
+///
 /// Column types are worked out from the values, because which fields exist
 /// varies from school to school.
 /// </summary>
@@ -37,6 +43,9 @@ internal static class Flattener
 
     /// <summary>Stands for an empty list until Build knows what kind of list it was.</summary>
     private static readonly object EmptyList = new();
+
+    /// <summary>Stands for an empty record until Build knows whether it was a list keyed by id.</summary>
+    private static readonly object EmptyRecord = new();
 
     public static List<FlatTable> Flatten(string table, IEnumerable<JsonObject> records)
     {
@@ -112,6 +121,18 @@ internal static class Flattener
 
             switch (value)
             {
+                // Nothing in an empty record says whether its keys would have been ids.
+                case JsonObject { Count: 0 }:
+                    row[name] = EmptyRecord;
+                    break;
+                case JsonObject entries when entries.All(entry => Guid.TryParse(entry.Key, out _)):
+                    row[name + CountSuffix] = (long)entries.Count;
+                    foreach (var (entryId, entry) in entries)
+                    {
+                        AddRow(ChildTable(table, name), Keyed(entryId, entry), childLink, tables);
+                    }
+
+                    break;
                 case JsonObject nested:
                     AddFields(table, nested, name + "_", row, childLink, tables, reserved);
                     break;
@@ -151,6 +172,23 @@ internal static class Flattener
     private static string ChildTable(string table, string name) =>
         $"{table}_{new string(name.Select(character => char.IsAsciiLetterOrDigit(character) || character == '_' ? character : '_').ToArray())}";
 
+    /// <summary>An entry of a record keyed by id, with its key as its id unless it has one of its own.</summary>
+    private static JsonObject Keyed(string key, JsonNode? entry)
+    {
+        if (entry is JsonObject fields)
+        {
+            var record = (JsonObject)fields.DeepClone();
+            if (!record.ContainsKey("id"))
+            {
+                record["id"] = key;
+            }
+
+            return record;
+        }
+
+        return new JsonObject { ["id"] = key, ["value"] = entry?.DeepClone() };
+    }
+
     private static void AddIdRows(
         string table,
         string column,
@@ -175,12 +213,17 @@ internal static class Flattener
         var counted = rows.SelectMany(row => row.Keys).Where(key => key.EndsWith(CountSuffix, StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal);
         foreach (var row in rows)
         {
-            foreach (var key in row.Where(field => ReferenceEquals(field.Value, EmptyList)).Select(field => field.Key).ToList())
+            foreach (var (key, empty) in row.Where(field => ReferenceEquals(field.Value, EmptyList) || ReferenceEquals(field.Value, EmptyRecord)).ToList())
             {
                 if (counted.Contains(key + CountSuffix))
                 {
                     row.Remove(key);
                     row[key + CountSuffix] = 0L;
+                }
+                else if (ReferenceEquals(empty, EmptyRecord))
+                {
+                    // An empty record that was never a list has no fields to give columns to.
+                    row.Remove(key);
                 }
                 else
                 {
