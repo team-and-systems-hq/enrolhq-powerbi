@@ -25,6 +25,8 @@ Needs Windows, the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0
 
 The first download takes 30 to 60 minutes for a school with about 10,000 applications; nearly all of that is the full application records. Later runs fetch only the applications that changed.
 
+A computer without the .NET 8 SDK can run the [single-file program](#building-the-single-file-program) in place of steps 1 and 3. For a second school, see [Adding another school](#adding-another-school).
+
 ## Settings
 
 | Setting | Value |
@@ -35,6 +37,45 @@ The first download takes 30 to 60 minutes for a school with about 10,000 applica
 | `ENROLHQ_DATA_DIR` | Where to keep the local copy. Default: `data` beside the `.env` file |
 
 Each setting can also be given as an environment variable of the same name. An environment variable wins over the `.env` file. When the environment sets both `ENROLHQ_INSTANCE` and `ENROLHQ_API_TOKEN`, no `.env` is read unless one is named with `--env`, and the local copy goes in a `data` folder in the current folder. Each run says where its settings came from.
+
+## Adding another school
+
+Each school has its own settings file and its own local copy, so adding one never touches another.
+
+1. Get an API token from that school. A token only works for the school whose EnrolHQ issued it.
+2. Create a settings file for the school beside `.env`, named after it, for example `.env.secondschool`:
+   ```
+   ENROLHQ_INSTANCE=enrol.secondschool.edu.au
+   ENROLHQ_API_TOKEN=that-school's-token
+   ENROLHQ_ANONYMISE=yes
+   ```
+   Limit who can read it, as for `.env` (see [Security](#security)). Git ignores every `.env.*` file except `.env.example`.
+3. From the folder that holds the settings files, download that school's data by naming its file:
+   ```
+   enrolhq-sync --env .env.secondschool
+   ```
+   Give the path to `enrolhq-sync.exe` if it is not in that folder; [Quick start](#quick-start) and [Building the single-file program](#building-the-single-file-program) say where each build puts it. The run starts by saying which school and which settings file it is using.
+4. Open that school's project, `data\enrol.secondschool.edu.au\anonymised\powerbi\EnrolHQ.pbip`, in Power BI Desktop and click **Refresh**.
+
+Every other command takes `--env` the same way, for example `enrolhq-sync status --env .env.secondschool`. Without `--env` the tool uses `.env`.
+
+```
+data\
+    enrol.firstschool.edu.au\anonymised\
+    enrol.secondschool.edu.au\anonymised\
+        enrolhq.db
+        parquet\
+        powerbi\EnrolHQ.pbip
+        logs\
+```
+
+What differs from school to school:
+
+- **The tables and columns.** Schools switch fields on and off and name their statuses differently. Each school's Power BI project is written from that school's own columns.
+- **Fields the masking rules have not seen.** Their text is redacted, not let through, and the run lists the fields it happened in. See [How the masking works](#how-the-masking-works).
+- **How long the first download takes.** It grows with the number of applications.
+
+Every school's project is called `EnrolHQ`. Open one at a time in Power BI Desktop, so that anything connecting to it by name gets the school you mean.
 
 ## Security
 
@@ -180,6 +221,30 @@ Two scripts use Microsoft tools that are not in this repository, because Microso
 | `dotnet build sync\EnrolHQ.Sync -c Release` | Build the sync tool |
 | `.\check-powerbi-project.ps1` | Check the generated Power BI project |
 | `.\update-parity.ps1` | Regenerate the file the parity test compares against |
+
+### Building the single-file program
+
+`dotnet build` makes a small `enrolhq-sync.exe` that needs .NET 8 on the computer that runs it. For a computer without .NET, such as a school's, build one file that carries .NET inside it:
+
+1. Run the tests:
+   ```
+   dotnet test sync\EnrolHQ.Sync.Tests
+   ```
+2. Make sure no `enrolhq-sync.exe` is running, then build:
+   ```
+   dotnet publish sync\EnrolHQ.Sync -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o bin\publish
+   ```
+   This writes `bin\publish\enrolhq-sync.exe`, about 70 MB, for 64-bit Windows. It replaces the file already there.
+3. Check it before handing it on. Neither command calls EnrolHQ:
+   ```
+   bin\publish\enrolhq-sync.exe --help
+   bin\publish\enrolhq-sync.exe status
+   ```
+   `status` reads the local copy named by `.env`. From a folder with no settings in reach it should stop with "No settings found".
+
+The version inside the file ends with the commit it was built from, for example `0.1.0+57ef307`. It is shown under **Details > Product version** in the file's properties. The commit is whatever was checked out at the time, so commit your changes before building, or the version will name a commit that does not hold them.
+
+To use the file on another computer, copy it into a folder with a `.env` file and run it there. The local copy goes in a `data` folder beside the `.env` file. `bin\` is not committed; the file is not in this repository.
 
 ### Adding a masking rule
 
