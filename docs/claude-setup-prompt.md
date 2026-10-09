@@ -51,3 +51,7 @@ Save the project in Power BI Desktop (Ctrl+S) afterwards to keep it.
 ## Keeping the data current
 
 Run `enrolhq-sync` again, then click **Refresh** in Power BI Desktop. Later runs only fetch the applications that changed, so they are much quicker than the first.
+
+## Communications
+
+Three tables hold communications: `notes` (staff notes on an application), `activity_log` (calls, meetings, letters, SMS and emails staff logged) and `email_log` (every email EnrolHQ sent, with `email_log_recipient_list` saying whether each recipient opened it). When anonymised, what was written is redacted; what happened, when, of what kind and by which staff member is kept. Only `notes` can be joined to an application; the API does not say which application an activity or email belongs to.

@@ -669,7 +669,10 @@ Anon.RuleFor = (parent as text, key as text, isPerson as logical) as nullable te
         // custom_field_1, custom_field_2, ... hold answers as text, a list or
         // a nested object.
         else if Text.StartsWith(key, "custom_field_") then "RedactAll"
-        // religion_other, how_hear_other, ... are typed in by parents, and on
+        // "How did you hear about us" is reporting data, so the answer typed
+        // under Other is kept.
+        else if key = "how_hear_other" then null
+        // religion_other, student_resides_with_other, ... are typed in by parents, and on
         // live data some contain the family's own names.
         else if Text.EndsWith(key, "_other") then "Redact"
         else null;
@@ -802,6 +805,8 @@ Anon.KeyRules = [
     sid = "Sid",
     // Contact
     email = "Email",
+    // Email log: each recipient, cc and bcc is a record with the address and whether it was opened
+    address = "Email",
     mobile_phone = "MobilePhone",
     contact_phone = "MobilePhone",
     home_phone = "HomePhone",
@@ -882,6 +887,8 @@ Anon.KeyRules = [
     event_booking_pdf = "FileKey",
     filename = "FileName",
     attachment_file_names = "FileName",
+    // Email log: what staff wrote about the email
+    staff_description = "Redact",
     // Addresses: suburb, state and postcode are kept for statistics
     street_address = "Street",
     apartment = "Apartment",

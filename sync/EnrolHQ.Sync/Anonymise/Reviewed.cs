@@ -21,8 +21,11 @@ internal static class Reviewed
         // Choices, kinds and statuses
         "*.kind", "*.payment_kind", "*.title", "*.slug", "*.form_slug", "*.connection_type", "*.house",
         "*.status_label", "*.default_status_label", "*.booking_status", "*.lead_status", "*.login_requirement",
-        "*.latest_scheduled_sync_status", "*.first_parent_field", "*.correspondence_addressee", "*.how_hear",
-        "*.relationship_to_student", "*.religion", "*.educational_institution_type", "*.visa_subclass",
+        "*.latest_scheduled_sync_status", "*.first_parent_field", "*.correspondence_addressee", "*.how_hear", "*.how_hear_other",
+        "*.relationship_to_student", "*.religion", "*.educational_institution_type", "*.visa_subclass", "*.activity_kind",
+        // Email log: whether each recipient opened or clicked
+        "recipient_list.status", "cc.status", "bcc.status", "recipient_list.clicks_count", "cc.clicks_count", "bcc.clicks_count",
+        "recipient_list.opens_count", "cc.opens_count", "bcc.opens_count",
         "*.HH", "*.mm",
         // Places and codes
         "*.suburb", "*.state", "*.postcode", "*.city", "*.alpha_2_code", "*.alpha_3_code",

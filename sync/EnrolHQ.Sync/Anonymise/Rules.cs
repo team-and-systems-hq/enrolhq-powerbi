@@ -42,7 +42,7 @@ internal static class Rules
     /// is downloaded again in full, because it still holds whatever the older
     /// rules left unmasked.
     /// </summary>
-    public const int Version = 4;
+    public const int Version = 5;
 
     /// <summary>Applied wherever the key appears.</summary>
     private static readonly Dictionary<string, Rule> ByKey = new(StringComparer.Ordinal)
@@ -64,6 +64,8 @@ internal static class Rules
         ["sid"] = Rule.Sid,
         // Contact
         ["email"] = Rule.Email,
+        // Email log: each recipient, cc and bcc is a record with the address and whether it was opened
+        ["address"] = Rule.Email,
         ["mobile_phone"] = Rule.MobilePhone,
         ["contact_phone"] = Rule.MobilePhone,
         ["home_phone"] = Rule.HomePhone,
@@ -144,6 +146,8 @@ internal static class Rules
         ["event_booking_pdf"] = Rule.FileKey,
         ["filename"] = Rule.FileName,
         ["attachment_file_names"] = Rule.FileName,
+        // Email log: what staff wrote about the email
+        ["staff_description"] = Rule.Redact,
         // Addresses: suburb, state and postcode are kept for statistics
         ["street_address"] = Rule.Street,
         ["apartment"] = Rule.Apartment,
@@ -248,7 +252,14 @@ internal static class Rules
             return Rule.RedactAll;
         }
 
-        // religion_other, how_hear_other, ... are typed in by parents, and on
+        // "How did you hear about us" is reporting data, so the answer typed
+        // under Other is kept. The safety net still redacts one that names the family.
+        if (key == "how_hear_other")
+        {
+            return null;
+        }
+
+        // religion_other, student_resides_with_other, ... are typed in by parents, and on
         // live data some contain the family's own names.
         if (key.EndsWith("_other", StringComparison.Ordinal))
         {

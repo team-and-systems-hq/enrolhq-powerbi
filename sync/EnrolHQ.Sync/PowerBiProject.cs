@@ -42,6 +42,12 @@ internal static class PowerBiProject
         ("event_bookings_student_profiles", "student_profile_id", "applications", "id", true),
         ("form_submissions", "form_id", "forms", "id", true),
         ("form_submissions", "student_profile_id", "applications", "id", true),
+        ("notes", "student_profile", "applications", "id", true),
+        ("notes", "created_by", "staff", "id", true),
+        ("activity_log", "student_profile", "applications", "id", true),
+        ("activity_log", "created_by", "staff", "id", true),
+        ("email_log", "student_profile", "applications", "id", true),
+        ("email_log", "sent_by", "staff", "id", true),
     ];
 
     /// <summary>
@@ -70,6 +76,9 @@ internal static class PowerBiProject
         ["form_submissions"] = "One row per form a parent has started or completed. Answers are not included.",
         ["staff"] = "Staff accounts.",
         ["leads"] = "Enquiries that are not yet applications.",
+        ["notes"] = "Notes staff have written on applications. The text is redacted when the data is anonymised.",
+        ["activity_log"] = "Communications logged by staff against an application: phone calls, meetings, letters, SMS and emails, by activity_kind.",
+        ["email_log"] = "Every email EnrolHQ sent, with its kind, when it was sent and who sent it.",
         ["sync_info"] = "When each table was last downloaded from EnrolHQ, and whether the data is anonymised.",
     };
 
@@ -396,6 +405,15 @@ internal static class PowerBiProject
                     "Students who booked an event",
                     "DISTINCTCOUNT(event_bookings_student_profiles[student_profile_id])",
                     Whole);
+                break;
+            case "notes":
+                yield return ("Notes", "COUNTROWS(notes)", Whole);
+                break;
+            case "activity_log":
+                yield return ("Logged activities", "COUNTROWS(activity_log)", Whole);
+                break;
+            case "email_log":
+                yield return ("Emails sent", "COUNTROWS(email_log)", Whole);
                 break;
             case "form_submissions":
                 yield return ("Form submissions", "COUNTROWS(form_submissions)", Whole);

@@ -139,10 +139,15 @@ One table per endpoint, plus a table for each list inside a record, linked to it
 | `event_bookings` and its child tables | `staff-event-bookings/` |
 | `forms`, `form_submissions` | `forms/staff/`, `forms/staff-submits/` |
 | `leads`, `lead_references` | `leads/`, `lead-references/` |
+| `notes` | `notes/`: notes staff wrote on an application, linked to it by `student_profile`. The text is redacted when anonymised |
+| `activity_log` | `activity-log/`: communications staff logged against an application, by `activity_kind` (phone call, meeting, letter, SMS, email and so on). The description is redacted when anonymised |
+| `email_log` and `email_log_recipient_list` | `email-log/`: every email EnrolHQ sent, with its kind, sender and whether each recipient opened it. Subjects are redacted when anonymised |
 | `staff`, `campuses`, `attendance_types`, `application_statuses` | reference data |
 | `sync_info` | When each table was last downloaded, and whether the data is anonymised |
 
-Not downloaded: notes, activity log, email log, audit log, payment order lines and form answers. The API serves those one student or one form at a time.
+The API does not say which application an activity log entry or an email belongs to, so those two tables cannot be joined to applications; they report what was sent and when, by kind and by staff member. Notes do carry the application.
+
+Not downloaded: audit log, payment order lines and form answers. The API serves those one student or one form at a time.
 
 Column types are worked out from the values, because which fields exist varies from school to school. Times are the school's local clock time; a time EnrolHQ sends in UTC is turned into the computer's local time.
 
@@ -191,7 +196,7 @@ Power BI keeps its own copy of the data inside the project. After such a sync, c
 
 ### Kept on purpose
 
-Dates of birth, `external_id`, `student_code` and every record id are always kept: schools need dates of birth for reporting and the ids to match their own systems. Suburb, state, postcode, gender, religion, languages, countries, occupation, interests, current school and medical condition names are kept too, as are the school's own campus details, event names and descriptions, and form titles. Staff names on a campus (principal and registrar) are masked. `sync\EnrolHQ.Sync\Anonymise\Reviewed.cs` lists every kept field.
+Dates of birth, `external_id`, `student_code` and every record id are always kept: schools need dates of birth for reporting and the ids to match their own systems. How a family heard about the school is kept in full, including the answer typed under Other, because schools report on it; a typed answer that names the family is still redacted. Suburb, state, postcode, gender, religion, languages, countries, occupation, interests, current school and medical condition names are kept too, as are the school's own campus details, event names and descriptions, and form titles. Staff names on a campus (principal and registrar) are masked. `sync\EnrolHQ.Sync\Anonymise\Reviewed.cs` lists every kept field.
 
 Date of birth with suburb, entry year and gender is often enough to identify a child within one school. `external_id` and `student_code` identify a child to anyone with access to the school's other systems. Anonymised data is safer to handle, not safe to publish.
 
