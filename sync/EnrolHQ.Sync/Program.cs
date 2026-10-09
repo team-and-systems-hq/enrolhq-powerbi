@@ -210,13 +210,20 @@ static async Task<List<string>> SyncAsync(Settings settings, Store store, Option
 static void WriteProject(Settings settings, IReadOnlyList<ExportedTable> tables, Options options, Reporter reporter)
 {
     var written = PowerBiProject.Write(settings, tables, overwrite: options.NewProject);
-    reporter.Line(written
-        ? $"Wrote the Power BI project: {PowerBiProject.ProjectFileFor(settings)}"
-        : $"Kept the existing Power BI project: {PowerBiProject.ProjectFileFor(settings)}");
-    if (!written)
+    if (written)
     {
-        reporter.Line("  New tables or columns are not added to it. To replace it with a fresh one, close it in Power BI Desktop and run: enrolhq-sync export --new-project");
+        reporter.Line($"Wrote the Power BI project: {PowerBiProject.ProjectFileFor(settings)}");
+        return;
     }
+
+    var added = PowerBiProject.AddTables(settings, tables);
+    reporter.Line($"Kept the existing Power BI project: {PowerBiProject.ProjectFileFor(settings)}");
+    if (added.Count > 0)
+    {
+        reporter.Line($"  Added tables to it: {string.Join(", ", added)}. Open the project again in Power BI Desktop and click Refresh to load them.");
+    }
+
+    reporter.Line("  New columns are not added to it. To replace it with a fresh one, close it in Power BI Desktop and run: enrolhq-sync export --new-project");
 }
 
 // A local copy is either real or anonymised, for one school, for its whole life.

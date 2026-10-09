@@ -186,6 +186,59 @@ internal static class PowerBiProject
     }
 
     /// <summary>
+    /// Adds tables an existing project does not have, with their relationships,
+    /// and touches nothing else: not the report, not the tables the project
+    /// already has, not any measure or page the school added. Power BI picks
+    /// the new files up when the project is next opened.
+    /// </summary>
+    /// <returns>The names of the tables added.</returns>
+    public static List<string> AddTables(Settings settings, IReadOnlyList<ExportedTable> tables)
+    {
+        var definition = Path.Combine(ModelFolder(settings), "definition");
+        var modelFile = Path.Combine(definition, "model.tmdl");
+        if (!File.Exists(modelFile))
+        {
+            return [];
+        }
+
+        var existing = ReadColumns(settings);
+        var missing = tables.Where(table => !existing.ContainsKey(table.Name)).ToList();
+        if (missing.Count == 0)
+        {
+            return [];
+        }
+
+        foreach (var table in missing)
+        {
+            Save(Path.Combine(definition, "tables", table.Name + ".tmdl"), Table(table));
+        }
+
+        var model = File.ReadAllText(modelFile);
+        var references = string.Concat(missing
+            .Where(table => !model.Contains($"ref table {Quote(table.Name)}", StringComparison.Ordinal))
+            .Select(table => $"ref table {Quote(table.Name)}\r\n"));
+        File.WriteAllText(modelFile, model.TrimEnd('\r', '\n') + "\r\n" + references, Utf8NoBom);
+
+        // Only relationships that involve a new table. Ones between tables the
+        // project already had are its own business; the school may have changed them.
+        var relationshipsFile = Path.Combine(definition, "relationships.tmdl");
+        var current = File.Exists(relationshipsFile) ? File.ReadAllText(relationshipsFile) : "";
+        var added = Relationships(tables)
+            .Where(relationship => missing.Any(table => table.Name == relationship.FromTable || table.Name == relationship.ToTable))
+            .Where(relationship => !current.Contains($"fromColumn: {Quote(relationship.FromTable)}.{Quote(relationship.FromColumn)}", StringComparison.Ordinal)
+                || !current.Contains($"toColumn: {Quote(relationship.ToTable)}.{Quote(relationship.ToColumn)}", StringComparison.Ordinal))
+            .Select(Relationship)
+            .ToList();
+        if (added.Count > 0)
+        {
+            var separator = current.Length == 0 ? "" : current.TrimEnd('\r', '\n') + "\r\n\r\n";
+            File.WriteAllText(relationshipsFile, (separator + string.Join("\n", added)).ReplaceLineEndings("\r\n"), Utf8NoBom);
+        }
+
+        return missing.Select(table => table.Name).ToList();
+    }
+
+    /// <summary>
     /// The columns each table of an existing project loads from its Parquet
     /// file, read from the project's own definition. Columns the school or an
     /// LLM calculated, and tables that do not come from a Parquet file, are left out.

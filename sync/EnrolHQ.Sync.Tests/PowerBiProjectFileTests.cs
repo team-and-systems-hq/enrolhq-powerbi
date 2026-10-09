@@ -104,6 +104,42 @@ public sealed class PowerBiProjectFileTests : IDisposable
         Assert.DoesNotContain("Added by the school", File.ReadAllText(table));
     }
 
+    /// <summary>
+    /// A school's project keeps its own pages and measures. New tables are
+    /// added beside them, with their relationships, and nothing else changes.
+    /// </summary>
+    [Fact]
+    public void Adds_new_tables_to_an_existing_project_without_touching_the_rest()
+    {
+        PowerBiProject.Write(_settings, Tables, overwrite: false);
+        var definition = Path.Combine(PowerBiProject.FolderFor(_settings), "EnrolHQ.SemanticModel", "definition");
+        var applications = Path.Combine(definition, "tables", "applications.tmdl");
+        File.AppendAllText(applications, "\tmeasure 'Added by the school' = 1\r\n");
+        var page = Path.Combine(PowerBiProject.FolderFor(_settings), "EnrolHQ.Report", "definition", "pages", "overview", "page.json");
+        var pageBefore = File.ReadAllText(page);
+        var relationshipsBefore = File.ReadAllText(Path.Combine(definition, "relationships.tmdl"));
+
+        var withNotes = Tables.Append(new ExportedTable("notes", 5, [
+            new Column("id", ColumnKind.Text),
+            new Column("student_profile", ColumnKind.Text),
+            new Column("text", ColumnKind.Text),
+        ])).ToList();
+        var added = PowerBiProject.AddTables(_settings, withNotes);
+
+        Assert.Equal(["notes"], added);
+        Assert.Contains("column student_profile", Read("EnrolHQ.SemanticModel", "definition", "tables", "notes.tmdl"));
+        Assert.Contains("ref table notes", Read("EnrolHQ.SemanticModel", "definition", "model.tmdl"));
+        var relationships = Read("EnrolHQ.SemanticModel", "definition", "relationships.tmdl");
+        Assert.StartsWith(relationshipsBefore.TrimEnd('\r', '\n'), relationships);
+        Assert.Contains("fromColumn: notes.student_profile\r\n\ttoColumn: applications.id", relationships);
+        Assert.Contains("Added by the school", File.ReadAllText(applications));
+        Assert.Equal(pageBefore, File.ReadAllText(page));
+
+        // Running it again adds nothing.
+        Assert.Empty(PowerBiProject.AddTables(_settings, withNotes));
+        Assert.Equal(relationships, Read("EnrolHQ.SemanticModel", "definition", "relationships.tmdl"));
+    }
+
     [Fact]
     public void Writes_files_the_way_power_bi_expects()
     {
