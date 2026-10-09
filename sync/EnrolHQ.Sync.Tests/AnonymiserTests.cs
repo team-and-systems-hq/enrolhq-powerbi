@@ -85,6 +85,72 @@ public class AnonymiserTests
         Assert.Equal("Dr", (string)masked["user_parent"]!["title"]!);
     }
 
+    /// <summary>
+    /// "How did you hear about us" is reporting data, so both the ticked
+    /// options and the answer typed under Other are kept. A referral that
+    /// names a person is not.
+    /// </summary>
+    [Fact]
+    public void Keeps_how_a_family_heard_about_the_school()
+    {
+        var parent = MaskTable("application_details")[0]["user_parent"]!;
+
+        Assert.Equal("Friend", (string)parent["how_hear"]![0]!);
+        Assert.Equal("Banner outside the school", (string)parent["how_hear_other"]!);
+
+        var referral = Mask("""{"id":"a1","user_parent":{"id":"p1","how_hear_other":"Word of mouth","how_hear_personal_referral":"Jo Whitlock"}}""");
+        Assert.Equal("Word of mouth", (string)referral["user_parent"]!["how_hear_other"]!);
+        Assert.Equal("Redacted", (string)referral["user_parent"]!["how_hear_personal_referral"]!);
+    }
+
+    /// <summary>
+    /// The communication logs keep what happened and when, not what was said
+    /// or to whom.
+    /// </summary>
+    [Fact]
+    public void Masks_the_communication_logs()
+    {
+        var note = MaskTable("notes")[0];
+        var activity = MaskTable("activity_log")[0];
+        var email = MaskTable("email_log")[0];
+
+        Assert.Equal("Redacted", (string)note["text"]!);
+        Assert.Equal("3f2b8c1e-1111-4222-8333-444455556666", (string)note["student_profile"]!);
+        Assert.Equal("22222222-1111-4222-8333-444455556666", (string)note["created_by"]!);
+
+        Assert.Equal("PHONE_CALL", (string)activity["activity_kind"]!);
+        Assert.Equal("Redacted", (string)activity["description"]!);
+        Assert.Equal("anonymized/removed-file.pdf", (string)activity["attachment_src"]!);
+        Assert.Equal("2026-05-03T10:30:00+08:00", (string)activity["occurred_at"]!);
+
+        Assert.Equal("ENROLMENT_OFFER", (string)email["kind"]!);
+        Assert.Equal("Redacted", (string)email["subject"]!);
+        Assert.Equal("Redacted", (string)email["staff_description"]!);
+        // A recipient is a record with the address and whether the email was opened.
+        var recipient = email["recipient_list"]![0]!;
+        Assert.Matches(@"^[a-z0-9]{20}@example\.(com|net|org)$", (string)recipient["address"]!);
+        Assert.Equal("opened", (string)recipient["status"]!);
+        Assert.Equal("2", (string)recipient["opens_count"]!);
+        Assert.Matches(@"^[a-z0-9]{20}@example\.(com|net|org)$", (string)email["cc"]![0]!["address"]!);
+        Assert.Equal("sent", (string)email["cc"]![0]!["status"]!);
+        Assert.Empty((JsonArray)email["bcc"]!);
+        Assert.Equal("removed-file.pdf", (string)email["attachment_file_names"]![0]!);
+        Assert.Equal("22222222-1111-4222-8333-444455556666", (string)email["sent_by"]!);
+    }
+
+    [Fact]
+    public void A_how_hear_answer_that_names_the_family_is_still_redacted()
+    {
+        var original = (JsonObject)JsonNode.Parse(
+            """{"id":"a1","last_name":"Whitlock","user_parent":{"id":"p1","last_name":"Whitlock","how_hear_other":"My sister, also a Whitlock, is an old girl"}}""")!;
+        var masked = Anonymiser.Mask(original, "applications", "applications#0");
+
+        var redacted = SafetyNet.Apply(original, masked, "applications");
+
+        Assert.Equal("Redacted", (string)masked["user_parent"]!["how_hear_other"]!);
+        Assert.Equal(["applications.user_parent.how_hear_other"], redacted);
+    }
+
     [Fact]
     public void Removes_meeting_links_joining_instructions_and_event_tokens()
     {

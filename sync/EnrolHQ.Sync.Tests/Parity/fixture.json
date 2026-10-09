@@ -45,7 +45,7 @@
         "occupation": "Engineer",
         "employer": "Parentlast Plumbing",
         "how_hear": ["Friend"],
-        "how_hear_other": "Parentfirst's colleague",
+        "how_hear_other": "Banner outside the school",
         "consent": { "ip_addr": "1.2.3.4", "is_agreed": true },
         "alumnus": { "id": "bbbbbbbb-1111-4222-8333-444455556666", "full_name": "Parentfirst Parentlast", "dob": "1980-01-02", "alumni_number": "A0042" },
         "residential_address": { "id": "cccccccc-1111-4222-8333-444455556666", "street_address": "1 Real Street", "apartment": "Unit 9", "suburb": "Kew", "state": "VIC", "postcode": "3101" }
@@ -163,5 +163,14 @@
   ],
   "form_submissions": [
     { "form_id": "12121212-1111-4222-8333-444455556666", "created_at": "2026-05-01T09:00:00+08:00", "completed_at": null, "form_pdf": "0f0e0d0c-1111-4222-8333-444455556666", "student_profile": { "id": "3f2b8c1e-1111-4222-8333-444455556666", "first_name": "Realfirst", "last_name": "Reallast", "dob": "2015-03-04" } }
+  ],
+  "notes": [
+    { "id": "13131313-1111-4222-8333-444455556666", "created_at": "2026-05-02T10:00:00+08:00", "created_by": "22222222-1111-4222-8333-444455556666", "is_pinned": false, "text": "Spoke with Parentfirst Parentlast about fees", "student_profile": "3f2b8c1e-1111-4222-8333-444455556666", "event": null }
+  ],
+  "activity_log": [
+    { "id": "14141414-1111-4222-8333-444455556666", "activity_kind": "PHONE_CALL", "created_at": "2026-05-03T11:00:00+08:00", "description": "Called Parentfirst on 0411 222 333", "created_by": "22222222-1111-4222-8333-444455556666", "occurred_at": "2026-05-03T10:30:00+08:00", "attachment_src": "https://bucket.s3.amazonaws.com/school/activity/call-notes.pdf?X-Amz-Signature=abc" }
+  ],
+  "email_log": [
+    { "id": "15151515-1111-4222-8333-444455556666", "kind": "ENROLMENT_OFFER", "staff_description": "Offer letter for Realfirst Reallast", "created_at": "2026-05-04T12:00:00+08:00", "recipient_list": [{ "address": "parent@real-family.com", "status": "opened", "clicks_count": "0", "opens_count": "2" }], "bcc": [], "cc": [{ "address": "other@real-family.com", "status": "sent", "clicks_count": "0", "opens_count": "0" }], "subject": "Enrolment offer for Realfirst", "sent_by": "22222222-1111-4222-8333-444455556666", "attachment_file_names": ["Reallast offer.pdf"] }
   ]
 }

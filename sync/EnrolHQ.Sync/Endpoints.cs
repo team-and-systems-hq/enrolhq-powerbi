@@ -36,6 +36,12 @@ internal sealed record Endpoint(
         // Without a fixed order, rows created during a download can be skipped or repeated.
         new("leads", "leads/", 200, Ordered),
         new("form_submissions", "forms/staff-submits/", 200, Ordered),
+        // Communications with each family: staff notes, logged calls, meetings and
+        // letters, and every email sent. All are small requests but the email log
+        // runs to many pages, so they take 1000 rows at a time.
+        new("notes", "notes/", 1000),
+        new("activity_log", "activity-log/", 1000),
+        new("email_log", "email-log/", 1000),
         new("applications", "applications-list/", 200, Ordered),
         // The full record for every application: guardians, siblings, medical
         // data, payments and so on. Slow, but it can fetch only what changed.
