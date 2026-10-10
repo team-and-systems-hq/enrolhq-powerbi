@@ -27,9 +27,9 @@ jobs:
           dotnet publish sync/EnrolHQ.Sync -c Release -r win-x64 --self-contained true `
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:DebugType=None -p:DebugSymbols=false -p:Version=$version -o publish
-          Get-FileHash publish/enrolhq-sync.exe -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLower())  enrolhq-sync.exe" } |
-            Set-Content publish/enrolhq-sync.exe.sha256 -Encoding ascii
+          # One line, ending in a newline, as sha256sum -c and certutil both expect.
+          $hash = (Get-FileHash publish/enrolhq-sync.exe -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD/publish/enrolhq-sync.exe.sha256", "$hash  enrolhq-sync.exe`n")
           Get-Content publish/enrolhq-sync.exe.sha256
       - name: Check it runs
         shell: pwsh
