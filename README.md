@@ -13,11 +13,12 @@ Power BI never calls the EnrolHQ API. `enrolhq-sync` does the downloading, one r
 Needs 64-bit Windows and Power BI Desktop.
 
 1. Download `enrolhq-sync.exe` from the [latest release](https://github.com/team-and-systems-hq/enrolhq-powerbi/releases/latest) into a folder of its own. Each release is built by GitHub from the tagged source, and comes with a `.sha256` file to check the download against.
-2. In that folder, create a file named `.env` holding the school's address and API token, as in [`.env.example`](.env.example).
-3. Download the data:
+2. Run it from that folder:
    ```
    enrolhq-sync.exe
    ```
+   The first time, it asks for the school's EnrolHQ address, the API token (an EnrolHQ administrator makes one under their profile) and whether to anonymise, and saves the answers to a `.env` file beside it that only your Windows account can read. After that it just runs. To set the file up by hand instead, see [`.env.example`](.env.example).
+3. Wait for the download to finish. It shows its progress.
 4. Open `data\<school>\anonymised\powerbi\EnrolHQ.pbip` in Power BI Desktop and click **Refresh**.
 
 The first download takes 30 to 60 minutes for a school with about 10,000 applications; nearly all of that is the full application records. Later runs fetch only the applications that changed.
