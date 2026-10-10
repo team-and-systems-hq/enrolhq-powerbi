@@ -22,7 +22,10 @@ Needs 64-bit Windows and Power BI Desktop.
 
 The first download takes 30 to 60 minutes for a school with about 10,000 applications; nearly all of that is the full application records. Later runs fetch only the applications that changed.
 
-Windows SmartScreen may warn the first time the program runs, because it is not yet signed with a code-signing certificate. Choose **More info** and **Run anyway**, or check the download against its `.sha256` file first.
+Windows SmartScreen may warn the first time the program runs, because it is not yet signed with a code-signing certificate. Choose **More info** and **Run anyway**. To check the download first, compare its hash with the one in the `.sha256` file, in PowerShell:
+```
+(Get-FileHash enrolhq-sync.exe).Hash
+```
 
 To build it yourself instead, see [Development](#development). For a second school, see [Adding another school](#adding-another-school).
 
