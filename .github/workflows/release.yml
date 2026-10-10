@@ -1,0 +1,45 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 builds enrolhq-sync.exe from that commit and
+# publishes it as a release, so every download can be traced to the source it
+# was built from.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+      - name: Test
+        run: dotnet test sync/EnrolHQ.Sync.Tests --configuration Release
+      - name: Build the single-file program
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          dotnet publish sync/EnrolHQ.Sync -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=None -p:DebugSymbols=false -p:Version=$version -o publish
+          Get-FileHash publish/enrolhq-sync.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  enrolhq-sync.exe" } |
+            Set-Content publish/enrolhq-sync.exe.sha256 -Encoding ascii
+          Get-Content publish/enrolhq-sync.exe.sha256
+      - name: Check it runs
+        shell: pwsh
+        run: |
+          ./publish/enrolhq-sync.exe --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME publish/enrolhq-sync.exe publish/enrolhq-sync.exe.sha256 `
+            --title "enrolhq-sync $env:GITHUB_REF_NAME" --generate-notes
