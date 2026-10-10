@@ -10,22 +10,21 @@ Power BI never calls the EnrolHQ API. `enrolhq-sync` does the downloading, one r
 
 ## Quick start
 
-Needs Windows, the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) and Power BI Desktop.
+Needs 64-bit Windows and Power BI Desktop.
 
-1. Build the sync tool:
-   ```
-   dotnet build sync\EnrolHQ.Sync -c Release
-   ```
-2. Copy `.env.example` to `.env` and fill in the school's address and API token.
+1. Download `enrolhq-sync.exe` from the [latest release](https://github.com/team-and-systems-hq/enrolhq-powerbi/releases/latest) into a folder of its own. Each release is built by GitHub from the tagged source, and comes with a `.sha256` file to check the download against.
+2. In that folder, create a file named `.env` holding the school's address and API token, as in [`.env.example`](.env.example).
 3. Download the data:
    ```
-   sync\EnrolHQ.Sync\bin\Release\net8.0\enrolhq-sync.exe
+   enrolhq-sync.exe
    ```
 4. Open `data\<school>\anonymised\powerbi\EnrolHQ.pbip` in Power BI Desktop and click **Refresh**.
 
 The first download takes 30 to 60 minutes for a school with about 10,000 applications; nearly all of that is the full application records. Later runs fetch only the applications that changed.
 
-A computer without the .NET 8 SDK can run the [single-file program](#building-the-single-file-program) in place of steps 1 and 3. For a second school, see [Adding another school](#adding-another-school).
+Windows SmartScreen may warn the first time the program runs, because it is not yet signed with a code-signing certificate. Choose **More info** and **Run anyway**, or check the download against its `.sha256` file first.
+
+To build it yourself instead, see [Development](#development). For a second school, see [Adding another school](#adding-another-school).
 
 ## Settings
 
@@ -54,7 +53,7 @@ Each school has its own settings file and its own local copy, so adding one neve
    ```
    enrolhq-sync --env .env.secondschool
    ```
-   Give the path to `enrolhq-sync.exe` if it is not in that folder; [Quick start](#quick-start) and [Building the single-file program](#building-the-single-file-program) say where each build puts it. The run starts by saying which school and which settings file it is using.
+   Give the path to `enrolhq-sync.exe` if it is not in that folder. The run starts by saying which school and which settings file it is using.
 4. Open that school's project, `data\enrol.secondschool.edu.au\anonymised\powerbi\EnrolHQ.pbip`, in Power BI Desktop and click **Refresh**.
 
 Every other command takes `--env` the same way, for example `enrolhq-sync status --env .env.secondschool`. Without `--env` the tool uses `.env`.
@@ -229,7 +228,7 @@ Two scripts use Microsoft tools that are not in this repository, because Microso
 
 ### Building the single-file program
 
-`dotnet build` makes a small `enrolhq-sync.exe` that needs .NET 8 on the computer that runs it. For a computer without .NET, such as a school's, build one file that carries .NET inside it:
+Every release on GitHub is built this way by the `Release` workflow when a tag such as `v0.2.0` is pushed: the tests run, the file is built with the tag as its version, its SHA-256 is written beside it, and both are attached to the release. To build the same file by hand:
 
 1. Run the tests:
    ```
