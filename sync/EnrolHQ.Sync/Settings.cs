@@ -60,7 +60,8 @@ internal sealed record Settings(string Instance, string ApiToken, bool Anonymise
         {
             throw new SettingsException(
                 "No settings found. Copy .env.example to .env and fill it in, pass --env <path>, "
-                + "or set ENROLHQ_INSTANCE and ENROLHQ_API_TOKEN as environment variables.");
+                + "or set ENROLHQ_INSTANCE and ENROLHQ_API_TOKEN as environment variables.",
+                noSettings: true);
         }
 
         var instance = NormaliseInstance(Required(values, "ENROLHQ_INSTANCE"));
@@ -159,4 +160,8 @@ internal sealed record Settings(string Instance, string ApiToken, bool Anonymise
     }
 }
 
-internal sealed class SettingsException(string message) : Exception(message);
+/// <param name="noSettings">True when there were no settings at all, as opposed to a wrong one.</param>
+internal sealed class SettingsException(string message, bool noSettings = false) : Exception(message)
+{
+    public bool NoSettings { get; } = noSettings;
+}

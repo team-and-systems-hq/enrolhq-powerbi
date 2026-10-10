@@ -28,6 +28,9 @@ const string Usage =
 
     The API token is not accepted as an option, because other programs can see a command line.
 
+    With no settings at all, and a person at the keyboard, enrolhq-sync asks for them and saves
+    them to a .env file in the current folder.
+
     Stopping a download with Ctrl+C is safe. Run the same command again and it carries on.
     """;
 
@@ -60,7 +63,16 @@ var startedAt = DateTimeOffset.UtcNow;
 Reporter? reporter = null;
 try
 {
-    var settings = Settings.Load(options.EnvPath);
+    Settings settings;
+    try
+    {
+        settings = Settings.Load(options.EnvPath);
+    }
+    catch (SettingsException error) when (error.NoSettings && FirstRun.CanAsk(options))
+    {
+        settings = Settings.Load(FirstRun.AskAndSave());
+    }
+
     if (options.Command is "status" or "export" && !File.Exists(settings.DatabasePath))
     {
         // Nothing to show, and no reason to create an empty copy for a mistyped address.
