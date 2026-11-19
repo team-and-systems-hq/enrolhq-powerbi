@@ -32,6 +32,11 @@ internal sealed class FakeApi : HttpMessageHandler
 
     public void Serve(string path, IEnumerable<JsonObject> records) => _records[path] = records.ToList();
 
+    /// <summary>Answers every request for this path with 403, as for a feature the school does not use.</summary>
+    public void Refuse(string path) => _refused.Add(path);
+
+    private readonly HashSet<string> _refused = [];
+
     public void Serve(string path, int count) =>
         Serve(path, Enumerable.Range(1, count).Select(number => new JsonObject { ["id"] = $"r{number:000}", ["number"] = number }));
 
@@ -116,6 +121,11 @@ internal sealed class FakeApi : HttpMessageHandler
         }
 
         BeforeAnswer?.Invoke(path);
+
+        if (_refused.Contains(path))
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("""{"detail":"You do not have permission to perform this action."}""") });
+        }
 
         // applications/{id}/ answers one record.
         var trimmed = path.TrimEnd('/');

@@ -298,6 +298,13 @@ internal sealed class Store : IDisposable
         return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
     }
 
+    /// <summary>Records of the table that the download in this cycle has not seen.</summary>
+    public int CountUnseen(string table, int cycle)
+    {
+        using var command = Command("SELECT COUNT(*) FROM records WHERE table_name = $table AND cycle < $cycle", ("$table", table), ("$cycle", cycle));
+        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
     public IEnumerable<JsonObject> Read(string table)
     {
         using var command = Command("SELECT json FROM records WHERE table_name = $table ORDER BY id", ("$table", table));

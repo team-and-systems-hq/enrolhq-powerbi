@@ -454,6 +454,66 @@ public sealed class SyncRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_first_download_that_sees_the_list_change_is_followed_by_changes_only()
+    {
+        _api.Serve("applications-list/", new[] { "s0", "s1", "s2", "s3" }.Select(id => new JsonObject { ["id"] = id }));
+        _api.Serve("/api/v3alpha/applications/", [Student("s1"), Student("s2"), Student("s3")]);
+        using var client = _api.Client();
+        var endpoint = StudentApplications with { PageSize = 2 };
+        var pages = 0;
+        _api.BeforeAnswer = path =>
+        {
+            // A student added before page 2 pushes s2 back onto it, so s0 is skipped.
+            if (path == "/api/v3alpha/applications/" && ++pages == 2)
+            {
+                _api.Records(path).Insert(0, Student("s0"));
+            }
+        };
+
+        var runner = Runner(client);
+        await runner.SyncAsync(Applications, full: false, CancellationToken.None);
+        await runner.SyncAsync(endpoint, full: false, CancellationToken.None);
+        await runner.ReconcileWithApplicationsAsync(endpoint, CancellationToken.None);
+
+        Assert.Equal(["s0", "s1", "s2", "s3"], _store.Ids("student_applications").Order());
+
+        await _api.Delay(TimeSpan.FromDays(1), CancellationToken.None);
+        _api.Requests.Clear();
+        await Runner(client).SyncAsync(endpoint, full: false, CancellationToken.None);
+
+        Assert.Contains("updated_after=", Assert.Single(DataRequests()));
+    }
+
+    private static readonly Endpoint AdmissionProcesses = Endpoint.All.Single(endpoint => endpoint.Table == "admission_processes");
+
+    [Fact]
+    public async Task Skips_admission_processes_at_a_school_that_does_not_use_them()
+    {
+        _api.Refuse("admission-processes/");
+        _api.Serve("staff/", 3);
+        using var client = _api.Client();
+
+        var skipped = await Runner(client).SyncAllAsync([AdmissionProcesses, StudentApplications, Staff], full: false, CancellationToken.None);
+
+        Assert.Empty(skipped);
+        Assert.DoesNotContain(DataRequests(), request => request.Contains("v3alpha", StringComparison.Ordinal));
+        Assert.Equal(3, _store.Count("staff"));
+    }
+
+    [Fact]
+    public async Task Student_applications_refused_at_a_school_that_uses_admission_processes_counts_as_refused()
+    {
+        _api.Serve("admission-processes/", [new JsonObject { ["id"] = "p1", ["title"] = "Example Scholarship" }]);
+        _api.Refuse("/api/v3alpha/applications/");
+        using var client = _api.Client();
+
+        var skipped = await Runner(client).SyncAllAsync([AdmissionProcesses, StudentApplications], full: false, CancellationToken.None);
+
+        Assert.Equal(["student_applications"], skipped);
+        Assert.Equal(1, _store.Count("admission_processes"));
+    }
+
+    [Fact]
     public async Task Allows_for_enrolhq_clock_being_behind()
     {
         _api.ServerBehind = TimeSpan.FromMinutes(20);

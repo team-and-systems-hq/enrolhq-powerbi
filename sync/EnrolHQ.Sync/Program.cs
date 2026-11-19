@@ -160,45 +160,11 @@ static async Task<List<string>> SyncAsync(Settings settings, Store store, Option
     var runner = new SyncRunner(settings.Anonymise, store, api, reporter);
     var timer = System.Diagnostics.Stopwatch.StartNew();
     var outdated = settings.Anonymise && options.Select(Endpoint.All).Any(endpoint => SyncRunner.IsOutdated(store, endpoint.Table));
-    var skipped = new List<string>();
-    var unused = new HashSet<string>(StringComparer.Ordinal);
+    List<string> skipped;
 
     try
     {
-        foreach (var endpoint in options.Select(Endpoint.All))
-        {
-            if (endpoint.Feature is not null && unused.Contains(endpoint.Feature))
-            {
-                continue;
-            }
-
-            try
-            {
-                await runner.SyncAsync(endpoint, options.Full, cancel);
-            }
-            catch (ApiException error) when (error.Status == 403 && endpoint.Feature is not null)
-            {
-                // A school without the feature is not an error, and its other
-                // endpoints, which can take a long time, are not worth asking.
-                var tables = Endpoint.All.Where(other => other.Feature == endpoint.Feature).Select(other => other.Table);
-                reporter.Line($"{endpoint.Table}: EnrolHQ answered 403, so this school does not use {endpoint.Feature} "
-                    + $"(or the API token may not read them). Not downloaded: {string.Join(", ", tables)}");
-                unused.Add(endpoint.Feature);
-                continue;
-            }
-            catch (ApiException error) when (error.Status is 403 or 404)
-            {
-                // One endpoint this token may not read should not stop the others.
-                reporter.Line(error.Message);
-                skipped.Add(endpoint.Table);
-                continue;
-            }
-
-            if (endpoint.UpdatedAfter)
-            {
-                await runner.ReconcileWithApplicationsAsync(endpoint, cancel);
-            }
-        }
+        skipped = await runner.SyncAllAsync(options.Select(Endpoint.All), options.Full, cancel);
 
         if (outdated)
         {

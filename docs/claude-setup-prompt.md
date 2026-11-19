@@ -22,7 +22,8 @@ Notes on the model:
 - The school's own name for each status is application_statuses[status_label]. Use it whenever a question is about status, not the status number.
 - event_bookings_student_profiles links event bookings to applications.
 - If the school uses admission processes, a student can apply under several (for example a school place and a scholarship). student_applications has one row per student per process, with that application's own status (status_label), entry details and dates; admission_processes[title] names the process. applications shows only the primary application's status and entry details.
-- Some relationships are switched off to avoid clashes, such as events to campuses, and event_bookings to events (bookings reach events through events_sessions). student_applications reaches application_statuses, campuses and attendance_types only through switched-off relationships, because the student's own record already does. Use USERELATIONSHIP if you need one.
+- Some relationships are switched off to avoid clashes, such as events to campuses, and event_bookings to events (bookings reach events through events_sessions). Use USERELATIONSHIP if you need one.
+- application_statuses, campuses and attendance_types filter student_applications through the student, so by the student's primary application, not each application's own. For an application's own status use student_applications[status_label]; for its own campus or attendance type, use USERELATIONSHIP with student_applications' switched-off relationship to that table.
 - Statuses such as Trashed, Declined and Not Proceeding are included in every count unless you filter them out. Ask me if it is unclear whether a question means all applications or only live ones.
 - Use the existing measures where one fits. Show me the DAX you ran with each answer.
 ```

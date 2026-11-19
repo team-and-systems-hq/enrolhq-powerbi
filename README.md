@@ -158,8 +158,9 @@ Not downloaded: audit log, payment order lines and form answers. The API serves 
 
 A school that uses admission processes accepts several kinds of application, for example one for each campus and one for each scholarship, each made of its own custom forms. A student can hold one application in each, with its own status, entry details and dates. `student_applications` has a row for each, linked to the student by `student_profile` and to the process by `admission_process`, and `status_label` gives the school's name for its status. `applications` and `application_details` show only the student's primary application (`is_primary`).
 
-- At a school that does not use admission processes, EnrolHQ refuses `admission-processes/`. The run says so, leaves out both tables, and does not end with an error.
+- At a school that does not use admission processes, EnrolHQ refuses `admission-processes/`. The run says so, leaves out both tables, and does not end with an error. If only the v3alpha student record is refused, `student_applications` counts as refused, like any other table.
 - Only the v3alpha student record has a student's applications, and it is otherwise different from v2's, so only the applications are kept from it. Each request takes around ten seconds, so the first download, and the full one each week, takes about 25 minutes for 15,000 students. The v3alpha API can change without notice.
+- `application_statuses`, `campuses` and `attendance_types` filter `student_applications` through the student, so by the student's primary application, not each application's own. For an application's own status use `status_label`; for its own campus or attendance type, use `USERELATIONSHIP` with its switched-off relationship to that table.
 - When `is_new_entry_details_missing` is true, the process asks for its own entry details and none were recorded, so the entry grade, year and campus are copies of the student's and may belong to another campus.
 - A form submission made before its form joined a process belongs to no application. It is in `form_submissions` but not in `student_applications_form_submits`.
 

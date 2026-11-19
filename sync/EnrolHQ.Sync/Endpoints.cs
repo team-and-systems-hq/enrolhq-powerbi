@@ -85,6 +85,12 @@ internal sealed record Endpoint(
             Feature: AdmissionProcesses),
     ];
 
+    /// <summary>
+    /// True for the first endpoint of a feature, whose 403 means the school
+    /// does not use it. A 403 from a later one is an ordinary refusal.
+    /// </summary>
+    public bool DecidesFeature => Feature is not null && ReferenceEquals(this, All.First(other => other.Feature == Feature));
+
     /// <summary>The record with only the fields the endpoint keeps.</summary>
     public JsonObject Kept(JsonObject record) =>
         Keep is null
