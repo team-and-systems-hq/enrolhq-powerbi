@@ -32,6 +32,11 @@ internal sealed class FakeApi : HttpMessageHandler
 
     public void Serve(string path, IEnumerable<JsonObject> records) => _records[path] = records.ToList();
 
+    /// <summary>Answers every request for this path with 403, as for a feature the school does not use.</summary>
+    public void Refuse(string path) => _refused.Add(path);
+
+    private readonly HashSet<string> _refused = [];
+
     public void Serve(string path, int count) =>
         Serve(path, Enumerable.Range(1, count).Select(number => new JsonObject { ["id"] = $"r{number:000}", ["number"] = number }));
 
@@ -88,7 +93,9 @@ internal sealed class FakeApi : HttpMessageHandler
         _stopper?.Invoke();
         cancel.ThrowIfCancellationRequested();
 
-        var path = request.RequestUri!.AbsolutePath["/api/v2/".Length..];
+        // Paths under /api/v2/ as the endpoints write them; any other keeps its full path.
+        var absolute = request.RequestUri!.AbsolutePath;
+        var path = absolute.StartsWith("/api/v2/", StringComparison.Ordinal) ? absolute["/api/v2/".Length..] : absolute;
         Requests.Add($"{request.Method} {path}{request.RequestUri.Query}");
 
         if (_interruptions.Count > 0 && _interruptions.Dequeue()(request) is { } interruption)
@@ -115,11 +122,17 @@ internal sealed class FakeApi : HttpMessageHandler
 
         BeforeAnswer?.Invoke(path);
 
-        // applications/{id}/ answers one record.
-        var parts = path.TrimEnd('/').Split('/');
-        if (parts.Length == 2 && _records.TryGetValue(parts[0] + "/", out var all))
+        if (_refused.Contains(path))
         {
-            var one = all.FirstOrDefault(record => (string?)record["id"] == parts[1]);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("""{"detail":"You do not have permission to perform this action."}""") });
+        }
+
+        // applications/{id}/ answers one record.
+        var trimmed = path.TrimEnd('/');
+        var cut = trimmed.LastIndexOf('/');
+        if (!_records.ContainsKey(path) && cut > 0 && _records.TryGetValue(trimmed[..(cut + 1)], out var all))
+        {
+            var one = all.FirstOrDefault(record => (string?)record["id"] == trimmed[(cut + 1)..]);
             return Task.FromResult(one is null ? new HttpResponseMessage(HttpStatusCode.NotFound) : Dated(Json(one.DeepClone())));
         }
 

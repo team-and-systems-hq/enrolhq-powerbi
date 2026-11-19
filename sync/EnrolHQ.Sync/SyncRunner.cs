@@ -30,6 +30,9 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
     private const string StartedUnder = "masking_rules_started:";
     private const string StartedByThisTool = "masking_rules_cycle:";
 
+    /// <summary>Meta key: when the last full download started.</summary>
+    private const string FullDownloadAt = "full_download:";
+
     /// <summary>A copy made before versions were recorded was masked under the first rules.</summary>
     private const int FirstRulesVersion = 1;
 
@@ -61,6 +64,52 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
             || (cycle is not null && cycle != store.GetState(table).Cycle);
     }
 
+    /// <summary>
+    /// Downloads each endpoint in turn, and checks those downloaded by changes
+    /// against the applications list. Returns the tables EnrolHQ refused to serve.
+    /// </summary>
+    public async Task<List<string>> SyncAllAsync(IEnumerable<Endpoint> endpoints, bool full, CancellationToken cancel)
+    {
+        var skipped = new List<string>();
+        var unused = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var endpoint in endpoints)
+        {
+            if (endpoint.Feature is not null && unused.Contains(endpoint.Feature))
+            {
+                continue;
+            }
+
+            try
+            {
+                await SyncAsync(endpoint, full, cancel);
+            }
+            catch (ApiException error) when (error.Status == 403 && endpoint.DecidesFeature)
+            {
+                // A school without the feature is not an error, and its other
+                // endpoints, which can take a long time, are not worth asking.
+                var tables = Endpoint.All.Where(other => other.Feature == endpoint.Feature).Select(other => other.Table);
+                reporter.Line($"{endpoint.Table}: EnrolHQ answered 403, so this school does not use {endpoint.Feature} "
+                    + $"(or the API token may not read them). Not downloaded: {string.Join(", ", tables)}");
+                unused.Add(endpoint.Feature!);
+                continue;
+            }
+            catch (ApiException error) when (error.Status is 403 or 404)
+            {
+                // One endpoint this token may not read should not stop the others.
+                reporter.Line(error.Message);
+                skipped.Add(endpoint.Table);
+                continue;
+            }
+
+            if (endpoint.UpdatedAfter)
+            {
+                await ReconcileWithApplicationsAsync(endpoint, cancel);
+            }
+        }
+
+        return skipped;
+    }
+
     public async Task SyncAsync(Endpoint endpoint, bool full, CancellationToken cancel)
     {
         for (var attempt = 1; ; attempt++)
@@ -82,13 +131,13 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
     }
 
     /// <summary>
-    /// application_details is downloaded by changes only, which can neither
-    /// notice an application deleted in EnrolHQ nor one skipped because the
-    /// list moved during a download. The applications list, downloaded in full
-    /// each run, says which applications exist: anything missing is fetched on
-    /// its own, and anything extra is removed.
+    /// application_details and student_applications are downloaded by changes
+    /// only, which can neither notice an application deleted in EnrolHQ nor
+    /// one skipped because the list moved during a download. The applications
+    /// list, downloaded in full each run, says which applications exist:
+    /// anything missing is fetched on its own, and anything extra is removed.
     /// </summary>
-    public async Task ReconcileDetailsAsync(Endpoint details, CancellationToken cancel)
+    public async Task ReconcileWithApplicationsAsync(Endpoint details, CancellationToken cancel)
     {
         if (!_complete.Contains("applications") || store.GetState(details.Table).CompletedAt is null)
         {
@@ -153,10 +202,15 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
         {
             // A copy masked under older rules still holds whatever those rules
             // left unmasked, so changes alone are not enough.
-            var incremental = endpoint.UpdatedAfter && !full && !outdated && state.Watermark is not null && store.Count(endpoint.Table) > 0;
+            var due = FullDownloadDue(endpoint);
+            var incremental = endpoint.UpdatedAfter && !full && !outdated && !due && state.Watermark is not null && store.Count(endpoint.Table) > 0;
             if (outdated && endpoint.UpdatedAfter && !full && state.Watermark is not null)
             {
                 reporter.Line($"{endpoint.Table}: the masking rules have changed since this was downloaded, so all of it is downloaded again");
+            }
+            else if (due && endpoint.UpdatedAfter && !full && state.Watermark is not null)
+            {
+                reporter.Line($"{endpoint.Table}: changes alone can miss some, so all of it is downloaded again every {endpoint.FullEvery!.Value.TotalDays:0} days");
             }
 
             var updatedAfter = incremental
@@ -237,11 +291,14 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
             return (false, true);
         }
 
-        // A full download of application_details that saw the list change
-        // keeps what it did not see: checking against the applications list
-        // removes what no longer exists. Changes only, when the list changed,
-        // asks for the same changes again next time, in case some were skipped.
-        var removed = store.CompleteCycle(endpoint.Table, state.Cycle, removeUnseen: fullCycle && !changed, _now(), advanceWatermark: !changed);
+        // A full download of application_details or student_applications that
+        // saw the list change keeps what it did not see: checking against the
+        // applications list removes what no longer exists. Changes only, when
+        // the list changed, asks for the same changes again next time, in case
+        // some were skipped. A first download holds nothing older, so changes
+        // can start from it: what it skipped is missing, and the check fetches it.
+        var first = fullCycle && state.Watermark is null && store.CountUnseen(endpoint.Table, state.Cycle) == 0;
+        var removed = store.CompleteCycle(endpoint.Table, state.Cycle, removeUnseen: fullCycle && !changed, _now(), advanceWatermark: !changed || first);
         Finish(endpoint, state, fullCycle, changed, saved, removed, timer.Elapsed);
         return (true, changed);
     }
@@ -265,6 +322,14 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
         if (fullCycle && !changed)
         {
             _complete.Add(endpoint.Table);
+        }
+
+        // A list that moved skips only a few records, which later changes and
+        // the check against the applications list catch up with, so the
+        // download still counts as the full one.
+        if (fullCycle && (!changed || endpoint.UpdatedAfter))
+        {
+            store.SetMeta(FullDownloadAt + endpoint.Table, (state.StartedAt ?? _now()).ToString("O", CultureInfo.InvariantCulture));
         }
 
         var summary = $"{endpoint.Table}: {Reporter.Number(store.Count(endpoint.Table))} records"
@@ -296,9 +361,19 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
     private static int? Number(Store store, string key) =>
         int.TryParse(store.GetMeta(key), NumberStyles.None, CultureInfo.InvariantCulture, out var version) ? version : null;
 
-    /// <summary>Masks the record when anonymisation is on. Nothing unmasked is ever handed to the store.</summary>
-    private JsonObject Prepare(JsonObject record, Endpoint endpoint)
+    /// <summary>True when the endpoint is downloaded in full now and then, and the last time was that long ago.</summary>
+    private bool FullDownloadDue(Endpoint endpoint) =>
+        endpoint.FullEvery is { } every
+        && (!DateTimeOffset.TryParse(store.GetMeta(FullDownloadAt + endpoint.Table), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var last)
+            || _now() - last >= every);
+
+    /// <summary>
+    /// Keeps only the fields the endpoint keeps, and masks the record when
+    /// anonymisation is on. Nothing unmasked is ever handed to the store.
+    /// </summary>
+    private JsonObject Prepare(JsonObject original, Endpoint endpoint)
     {
+        var record = endpoint.Kept(original);
         if (!anonymise)
         {
             return record;

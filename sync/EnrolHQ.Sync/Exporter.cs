@@ -26,7 +26,7 @@ internal static class Exporter
         var written = new List<ExportedTable>();
         foreach (var endpoint in Endpoint.All)
         {
-            foreach (var flat in Flattener.Flatten(endpoint.Table, store.Read(endpoint.Table)))
+            foreach (var flat in Flattener.Flatten(endpoint.Table, store.Read(endpoint.Table).SelectMany(endpoint.Rows)))
             {
                 var table = project.TryGetValue(flat.Name, out var expected) ? Conform(flat, expected, added, retyped) : flat;
                 reporter.Progress($"writing {table.Name}: {Reporter.Number(table.Rows.Count)} rows");

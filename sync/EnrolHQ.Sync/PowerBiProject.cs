@@ -48,6 +48,11 @@ internal static class PowerBiProject
         ("activity_log", "created_by", "staff", "id", true),
         ("email_log", "student_profile", "applications", "id", true),
         ("email_log", "sent_by", "staff", "id", true),
+        // A student's applications are filtered by everything about the student.
+        ("student_applications", "student_profile", "applications", "id", true),
+        ("student_applications", "admission_process", "admission_processes", "id", true),
+        ("student_applications_form_submits", "form", "forms", "id", true),
+        ("admission_processes_forms", "custom_form", "forms", "id", true),
     ];
 
     /// <summary>
@@ -58,6 +63,12 @@ internal static class PowerBiProject
     private static readonly (string FromTable, string FromColumn, string ToTable, string ToColumn, bool Active)[] MinorLookups =
     [
         ("events", "campus", "campuses", "id", true),
+        // These reach student_applications through applications as well, so
+        // they are switched off. status_label stands in for the status lookup.
+        ("admission_processes", "campus", "campuses", "id", true),
+        ("student_applications", "application_status", "application_statuses", "application_status", true),
+        ("student_applications", "campus", "campuses", "id", true),
+        ("student_applications", "attendance_type", "attendance_types", "id", true),
     ];
 
     private static readonly Dictionary<string, string> Descriptions = new(StringComparer.Ordinal)
@@ -79,6 +90,10 @@ internal static class PowerBiProject
         ["notes"] = "Notes staff have written on applications. The text is redacted when the data is anonymised.",
         ["activity_log"] = "Communications logged by staff against an application: phone calls, meetings, letters, SMS and emails, by activity_kind.",
         ["email_log"] = "Every email EnrolHQ sent, with its kind, when it was sent and who sent it.",
+        ["admission_processes"] = "The kinds of application the school accepts, for example a school place or a scholarship, each made of its own forms. Only at schools that use admission processes.",
+        ["admission_processes_forms"] = "The forms that make up each admission process. custom_form joins to forms.id. Submitting the form marked is_application_submission_form submits the application.",
+        ["student_applications"] = "One row per student per admission process: a student can apply under several, each with its own status, entry details and dates. student_profile joins to applications.id and admission_process to admission_processes.id. status_label is the school's name for application_status. is_primary marks the application whose status and entry details the student's own record shows. When is_new_entry_details_missing is true, the entry details are copies of the student's and may not be this application's. application_statuses, campuses and attendance_types filter these rows through the student, so by the student's primary application, not each application's own: for an application's own status use status_label, and for its own campus or attendance type USERELATIONSHIP with the switched-off relationship.",
+        ["student_applications_form_submits"] = "The form submissions that belong to each student application. form joins to forms.id. A submission made before its form joined an admission process belongs to no application, and is only in form_submissions.",
         ["sync_info"] = "When each table was last downloaded from EnrolHQ, and whether the data is anonymised.",
     };
 
@@ -129,7 +144,7 @@ internal static class PowerBiProject
         Save(Path.Combine(model, "definition", "relationships.tmdl"), string.Join("\n", relationships.Select(Relationship)));
         foreach (var table in tables)
         {
-            Save(Path.Combine(model, "definition", "tables", table.Name + ".tmdl"), Table(table));
+            Save(Path.Combine(model, "definition", "tables", table.Name + ".tmdl"), Table(table, tables));
         }
 
         Save(Path.Combine(report, "definition.pbir"), ReportProperties);
@@ -210,7 +225,7 @@ internal static class PowerBiProject
 
         foreach (var table in missing)
         {
-            Save(Path.Combine(definition, "tables", table.Name + ".tmdl"), Table(table));
+            Save(Path.Combine(definition, "tables", table.Name + ".tmdl"), Table(table, tables));
         }
 
         var model = File.ReadAllText(modelFile);
@@ -385,7 +400,8 @@ internal static class PowerBiProject
         + $"expression DataFolder = \"{settings.ParquetDirectory.Replace("\"", "\"\"")}\" "
         + "meta [IsParameterQuery=true, Type=\"Text\", IsParameterQueryRequired=true]\n";
 
-    private static string Table(ExportedTable table)
+    /// <param name="tables">Every table in the project, for columns that look a value up in another.</param>
+    private static string Table(ExportedTable table, IReadOnlyList<ExportedTable> tables)
     {
         var text = new StringBuilder();
         if (Descriptions.TryGetValue(table.Name, out var description))
@@ -412,6 +428,13 @@ internal static class PowerBiProject
             // Ids, years and grades are numbers that must never be added up.
             text.Append("\t\tsummarizeBy: none\n");
             text.Append($"\t\tsourceColumn: {column.Name}\n\n");
+        }
+
+        foreach (var column in CalculatedColumns(table, tables))
+        {
+            text.Append($"\tcolumn {Quote(column.Name)} = {column.Expression}\n");
+            text.Append("\t\tdataType: string\n");
+            text.Append("\t\tsummarizeBy: none\n\n");
         }
 
         text.Append($"\tpartition {Quote(table.Name)} = m\n");
@@ -479,6 +502,47 @@ internal static class PowerBiProject
                 }
 
                 break;
+            case "student_applications":
+                yield return ("Student applications", "COUNTROWS(student_applications)", Whole);
+                if (Has("submitted_at"))
+                {
+                    yield return (
+                        "Student applications submitted",
+                        "CALCULATE(COUNTROWS(student_applications), NOT ISBLANK(student_applications[submitted_at]))",
+                        Whole);
+                }
+
+                if (Has("completed_at"))
+                {
+                    yield return (
+                        "Student applications completed",
+                        "CALCULATE(COUNTROWS(student_applications), NOT ISBLANK(student_applications[completed_at]))",
+                        Whole);
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Text looked up from another table whose relationship is switched off.
+    /// The link from a student application's status to application_statuses
+    /// is off, because application_statuses already reaches student_applications
+    /// through the student's own record.
+    /// </summary>
+    private static IEnumerable<(string Name, string Expression)> CalculatedColumns(ExportedTable table, IReadOnlyList<ExportedTable> tables)
+    {
+        bool Has(string name, string column) =>
+            tables.Any(candidate => candidate.Name == name && candidate.Columns.Any(found => found.Name == column));
+
+        if (table.Name == "student_applications"
+            && table.Columns.Any(column => column.Name == "application_status")
+            && Has("application_statuses", "application_status")
+            && Has("application_statuses", "status_label"))
+        {
+            yield return (
+                "status_label",
+                "LOOKUPVALUE(application_statuses[status_label], application_statuses[application_status], student_applications[application_status])");
         }
     }
 

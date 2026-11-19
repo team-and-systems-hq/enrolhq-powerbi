@@ -160,29 +160,11 @@ static async Task<List<string>> SyncAsync(Settings settings, Store store, Option
     var runner = new SyncRunner(settings.Anonymise, store, api, reporter);
     var timer = System.Diagnostics.Stopwatch.StartNew();
     var outdated = settings.Anonymise && options.Select(Endpoint.All).Any(endpoint => SyncRunner.IsOutdated(store, endpoint.Table));
-    var skipped = new List<string>();
+    List<string> skipped;
 
     try
     {
-        foreach (var endpoint in options.Select(Endpoint.All))
-        {
-            try
-            {
-                await runner.SyncAsync(endpoint, options.Full, cancel);
-            }
-            catch (ApiException error) when (error.Status is 403 or 404)
-            {
-                // One endpoint this token may not read should not stop the others.
-                reporter.Line(error.Message);
-                skipped.Add(endpoint.Table);
-                continue;
-            }
-
-            if (endpoint.Table == "application_details")
-            {
-                await runner.ReconcileDetailsAsync(endpoint, cancel);
-            }
-        }
+        skipped = await runner.SyncAllAsync(options.Select(Endpoint.All), options.Full, cancel);
 
         if (outdated)
         {
