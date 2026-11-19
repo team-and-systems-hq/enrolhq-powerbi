@@ -90,6 +90,38 @@ public sealed class PowerBiProjectFileTests : IDisposable
         Assert.DoesNotContain("Offer", applications);
     }
 
+    /// <summary>
+    /// The link from a student application's status to its label is switched
+    /// off, so the label is looked up instead. The lookup is left out when
+    /// there is nothing to look it up in, because it would break the model.
+    /// </summary>
+    [Fact]
+    public void Gives_each_student_application_its_status_label()
+    {
+        ExportedTable[] tables =
+        [
+            .. Tables,
+            new("application_statuses", 30, [new Column("application_status", ColumnKind.Integer), new Column("status_label", ColumnKind.Text)]),
+            new("student_applications", 5, [
+                new Column("id", ColumnKind.Text),
+                new Column("student_profile", ColumnKind.Text),
+                new Column("application_status", ColumnKind.Integer),
+                new Column("submitted_at", ColumnKind.DateTime),
+            ]),
+        ];
+        PowerBiProject.Write(_settings, tables, overwrite: false);
+
+        var table = Read("EnrolHQ.SemanticModel", "definition", "tables", "student_applications.tmdl");
+        Assert.Contains(
+            "\tcolumn status_label = LOOKUPVALUE(application_statuses[status_label], application_statuses[application_status], student_applications[application_status])\r\n\t\tdataType: string\r\n",
+            table);
+        Assert.Contains("measure 'Student applications submitted'", table);
+        Assert.DoesNotContain("status_label", PowerBiProject.ReadColumns(_settings)["student_applications"].Select(column => column.Name));
+
+        PowerBiProject.Write(_settings, tables.Where(candidate => candidate.Name != "application_statuses").ToList(), overwrite: true);
+        Assert.DoesNotContain("LOOKUPVALUE", Read("EnrolHQ.SemanticModel", "definition", "tables", "student_applications.tmdl"));
+    }
+
     [Fact]
     public void Leaves_an_existing_project_alone_unless_told_to_replace_it()
     {

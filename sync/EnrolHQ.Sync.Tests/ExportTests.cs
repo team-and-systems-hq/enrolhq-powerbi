@@ -133,6 +133,24 @@ public sealed class ExportTests : IDisposable
     }
 
     [Fact]
+    public async Task Each_of_a_students_applications_is_a_row_of_its_own()
+    {
+        Hold(
+            "student_applications",
+            """{"id":"s1","applications":[{"id":"a1","admission_process":"p1","application_status":3,"form_submits":[{"id":"f1","form":"x"}]},{"id":"a2","admission_process":"p2","application_status":0,"form_submits":[]}]}""",
+            """{"id":"s2","applications":[]}""");
+
+        var tables = await Exporter.ExportAsync(_settings, _store, _reporter, newProject: false, CancellationToken.None);
+
+        var applications = tables.Single(table => table.Name == "student_applications");
+        Assert.Equal(2, applications.Rows);
+        Assert.Contains(applications.Columns, column => column.Name == "student_profile");
+        var submits = tables.Single(table => table.Name == "student_applications_form_submits");
+        Assert.Equal(1, submits.Rows);
+        Assert.Equal("student_application_id", submits.Columns[0].Name);
+    }
+
+    [Fact]
     public async Task Exporting_an_empty_copy_says_so()
     {
         var tables = await Exporter.ExportAsync(_settings, _store, _reporter, newProject: false, CancellationToken.None);

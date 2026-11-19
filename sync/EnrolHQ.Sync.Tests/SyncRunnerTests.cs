@@ -362,11 +362,95 @@ public sealed class SyncRunnerTests : IDisposable
         runner = Runner(client);
         await runner.SyncAsync(Applications, full: false, CancellationToken.None);
         await runner.SyncAsync(Details, full: false, CancellationToken.None);
-        await runner.ReconcileDetailsAsync(Details, CancellationToken.None);
+        await runner.ReconcileWithApplicationsAsync(Details, CancellationToken.None);
 
         Assert.Equal(_store.Ids("applications"), _store.Ids("application_details"));
         Assert.Contains("a03", _store.Ids("application_details"));
         Assert.DoesNotContain("a07", _store.Ids("application_details"));
+    }
+
+    private static readonly Endpoint StudentApplications = Endpoint.All.Single(endpoint => endpoint.Table == "student_applications");
+
+    private static JsonObject Student(string id) => new()
+    {
+        ["id"] = id,
+        ["first_name"] = "Realfirst",
+        ["last_name"] = "Reallast",
+        ["updated_at"] = "2026-09-01T00:00:00+00:00",
+        ["user_parent"] = new JsonObject { ["email"] = "parent@family.example" },
+        ["applications"] = new JsonArray(new JsonObject
+        {
+            ["id"] = $"{id}-boys",
+            ["admission_process"] = "11111111-2222-4333-8444-555566667777",
+            ["is_primary"] = true,
+            ["entry_year"] = 2028,
+            ["application_status"] = 3,
+            ["submitted_at"] = "2026-08-30T10:00:00+10:00",
+            ["form_submits"] = new JsonArray(new JsonObject
+            {
+                ["id"] = "99999999-8888-4777-8666-555544443333",
+                ["form"] = "22222222-3333-4444-8555-666677778888",
+                ["form_pdf"] = "33333333-4444-4555-8666-777788889999",
+            }),
+        }),
+    };
+
+    [Fact]
+    public async Task Keeps_only_each_students_applications_from_the_v3alpha_record()
+    {
+        _api.Serve("/api/v3alpha/applications/", [Student("44444444-5555-4666-8777-888899990000")]);
+        using var client = _api.Client();
+
+        await Runner(client, anonymise: true).SyncAsync(StudentApplications, full: false, CancellationToken.None);
+
+        Assert.StartsWith("GET /api/v3alpha/applications/?", Assert.Single(DataRequests()));
+        var stored = Assert.Single(_store.Read("student_applications"));
+        Assert.Equal(["id", "applications"], stored.Select(field => field.Key));
+        var application = stored["applications"]![0]!;
+        Assert.Equal(3, (int)application["application_status"]!);
+        Assert.Equal("2026-08-30T10:00:00+10:00", (string?)application["submitted_at"]);
+    }
+
+    [Fact]
+    public async Task Downloads_everything_again_once_the_last_full_download_is_a_week_old()
+    {
+        _api.Serve("/api/v3alpha/applications/", [Student("s1"), Student("s2"), Student("s3")]);
+        using var client = _api.Client();
+        await Runner(client).SyncAsync(StudentApplications, full: false, CancellationToken.None);
+
+        // Changing a student's application does not always change the student.
+        _api.Records("/api/v3alpha/applications/")[1]["applications"]![0]!["application_status"] = 6;
+        await _api.Delay(TimeSpan.FromDays(3), CancellationToken.None);
+        _api.Requests.Clear();
+        await Runner(client).SyncAsync(StudentApplications, full: false, CancellationToken.None);
+
+        Assert.Contains("updated_after=", Assert.Single(DataRequests()));
+        Assert.Equal(3, (int)_store.Read("student_applications").Single(record => (string?)record["id"] == "s2")["applications"]![0]!["application_status"]!);
+
+        await _api.Delay(TimeSpan.FromDays(4), CancellationToken.None);
+        _api.Requests.Clear();
+        await Runner(client).SyncAsync(StudentApplications, full: false, CancellationToken.None);
+
+        Assert.DoesNotContain("updated_after=", Assert.Single(DataRequests()));
+        Assert.Equal(6, (int)_store.Read("student_applications").Single(record => (string?)record["id"] == "s2")["applications"]![0]!["application_status"]!);
+    }
+
+    [Fact]
+    public async Task Fetches_a_student_missing_from_student_applications_from_the_v3alpha_record()
+    {
+        _api.Serve("applications-list/", [new JsonObject { ["id"] = "s1" }, new JsonObject { ["id"] = "s2" }]);
+        _api.Serve("/api/v3alpha/applications/", [Student("s1"), Student("s2")]);
+        using var client = _api.Client();
+        var runner = Runner(client);
+        await runner.SyncAsync(Applications, full: false, CancellationToken.None);
+        await runner.SyncAsync(StudentApplications, full: false, CancellationToken.None);
+        _store.Remove("student_applications", ["s2"]);
+
+        _api.Requests.Clear();
+        await runner.ReconcileWithApplicationsAsync(StudentApplications, CancellationToken.None);
+
+        Assert.Equal(["GET /api/v3alpha/applications/s2/"], DataRequests());
+        Assert.Equal(["applications", "id"], _store.Read("student_applications").Single(record => (string?)record["id"] == "s2").Select(field => field.Key).Order());
     }
 
     [Fact]

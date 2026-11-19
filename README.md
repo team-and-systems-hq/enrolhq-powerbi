@@ -110,9 +110,9 @@ What it does to stay within the API's rules:
 - **Waits when told to.** On "too many requests" it waits for as long as the API asks, or backs off further each time if the API does not say.
 - **Signs in once.** The API allows 5 sign-ins a minute, and each one cancels the access token before it.
 - **Saves its place after every page.** Stop it with Ctrl+C, or lose the connection, and the next run, with or without `--full`, carries on from the same page.
-- **Fetches only changes** for full application records, the one endpoint that supports it. Changes are asked for by EnrolHQ's clock, so a computer clock that runs fast does not cause changes to be missed.
+- **Fetches only changes** for full application records and student applications, the endpoints that support it. Changes are asked for by EnrolHQ's clock, so a computer clock that runs fast does not cause changes to be missed. Student applications are also downloaded in full once a week, because a change to one does not always count as a change to the student.
 - **Notices when a list changes during a download.** If records are added or removed while a table downloads, the pages move, so the table is downloaded again before anything is removed from the local copy.
-- **Checks application records against the applications list** after each run. An application missing from the full records is fetched on its own, and one deleted in EnrolHQ is removed, so no periodic `--full` is needed.
+- **Checks application records and student applications against the applications list** after each run. A student missing from either is fetched on its own, and one deleted in EnrolHQ is removed, so no periodic `--full` is needed.
 - **Retries** when the connection drops, including while signing in, and stops with a plain message when the address does not exist or EnrolHQ refuses.
 - **Shows progress**: `applications: 4,200 of 9,396 · page 21 of 47, about 53s left`. A log of each run is kept in `data\<school>\<mode>\logs`. Logs hold table names, counts and field names, never record data or tokens.
 
@@ -138,6 +138,8 @@ One table per endpoint, plus a table for each list inside a record, linked to it
 | --- | --- |
 | `applications` | `applications-list/`: summary of each application |
 | `application_details` and its child tables | `applications/`: the full record, with guardians, siblings, emergency contacts, payments and so on |
+| `admission_processes`, `admission_processes_forms` | `admission-processes/`: the kinds of application the school accepts, such as a school place or a scholarship, and the forms each is made of |
+| `student_applications`, `student_applications_form_submits` | `/api/v3alpha/applications/`: one row per student per admission process, with its own status, entry details and dates, and the form submissions that belong to it |
 | `events`, `events_sessions` | `staff-events/` |
 | `event_bookings` and its child tables | `staff-event-bookings/` |
 | `forms`, `form_submissions` | `forms/staff/`, `forms/staff-submits/` |
@@ -152,6 +154,15 @@ The API does not say which application an activity log entry or an email belongs
 
 Not downloaded: audit log, payment order lines and form answers. The API serves those one student or one form at a time.
 
+#### Admission processes
+
+A school that uses admission processes accepts several kinds of application, for example one for each campus and one for each scholarship, each made of its own custom forms. A student can hold one application in each, with its own status, entry details and dates. `student_applications` has a row for each, linked to the student by `student_profile` and to the process by `admission_process`, and `status_label` gives the school's name for its status. `applications` and `application_details` show only the student's primary application (`is_primary`).
+
+- At a school that does not use admission processes, EnrolHQ refuses `admission-processes/`. The run says so, leaves out both tables, and does not end with an error.
+- Only the v3alpha student record has a student's applications, and it is otherwise different from v2's, so only the applications are kept from it. Each request takes around ten seconds, so the first download, and the full one each week, takes about 25 minutes for 15,000 students. The v3alpha API can change without notice.
+- When `is_new_entry_details_missing` is true, the process asks for its own entry details and none were recorded, so the entry grade, year and campus are copies of the student's and may belong to another campus.
+- A form submission made before its form joined a process belongs to no application. It is in `form_submissions` but not in `student_applications_form_submits`.
+
 Column types are worked out from the values, because which fields exist varies from school to school. Times are the school's local clock time; a time EnrolHQ sends in UTC is turned into the computer's local time.
 
 ## The Power BI project
@@ -160,7 +171,7 @@ Column types are worked out from the values, because which fields exist varies f
 
 It is a starting point. Once measures or report pages have been added it belongs to whoever added them, so `enrolhq-sync` never overwrites it unless run with `--new-project`. That holds even if `EnrolHQ.pbip` has been renamed or deleted: while the `EnrolHQ.SemanticModel` or `EnrolHQ.Report` folder exists, the project is left alone.
 
-An existing project keeps loading as the data changes. Every table it has keeps a Parquet file, empty if the table has no rows, and every column it loads is still written, empty if the data no longer has it. New tables and columns are not added to an existing project; each sync lists any it is missing, and any column whose values no longer fit the type the project gives it.
+An existing project keeps loading as the data changes. Every table it has keeps a Parquet file, empty if the table has no rows, and every column it loads is still written, empty if the data no longer has it. New tables are added to an existing project with their relationships, and nothing else in it is changed; new columns are not added. Each sync lists the columns the project is missing, and any column whose values no longer fit the type the project gives it.
 
 Close the project in Power BI Desktop before replacing it; if it is open, the old project is left as it was. Replacing it removes the data cached inside it, so click **Refresh** after opening the new one.
 

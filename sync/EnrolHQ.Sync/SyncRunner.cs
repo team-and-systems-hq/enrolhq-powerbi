@@ -30,6 +30,9 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
     private const string StartedUnder = "masking_rules_started:";
     private const string StartedByThisTool = "masking_rules_cycle:";
 
+    /// <summary>Meta key: when the last full download that saw the list stay the same started.</summary>
+    private const string FullDownloadAt = "full_download:";
+
     /// <summary>A copy made before versions were recorded was masked under the first rules.</summary>
     private const int FirstRulesVersion = 1;
 
@@ -82,13 +85,13 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
     }
 
     /// <summary>
-    /// application_details is downloaded by changes only, which can neither
-    /// notice an application deleted in EnrolHQ nor one skipped because the
-    /// list moved during a download. The applications list, downloaded in full
-    /// each run, says which applications exist: anything missing is fetched on
-    /// its own, and anything extra is removed.
+    /// application_details and student_applications are downloaded by changes
+    /// only, which can neither notice an application deleted in EnrolHQ nor
+    /// one skipped because the list moved during a download. The applications
+    /// list, downloaded in full each run, says which applications exist:
+    /// anything missing is fetched on its own, and anything extra is removed.
     /// </summary>
-    public async Task ReconcileDetailsAsync(Endpoint details, CancellationToken cancel)
+    public async Task ReconcileWithApplicationsAsync(Endpoint details, CancellationToken cancel)
     {
         if (!_complete.Contains("applications") || store.GetState(details.Table).CompletedAt is null)
         {
@@ -153,10 +156,15 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
         {
             // A copy masked under older rules still holds whatever those rules
             // left unmasked, so changes alone are not enough.
-            var incremental = endpoint.UpdatedAfter && !full && !outdated && state.Watermark is not null && store.Count(endpoint.Table) > 0;
+            var due = FullDownloadDue(endpoint);
+            var incremental = endpoint.UpdatedAfter && !full && !outdated && !due && state.Watermark is not null && store.Count(endpoint.Table) > 0;
             if (outdated && endpoint.UpdatedAfter && !full && state.Watermark is not null)
             {
                 reporter.Line($"{endpoint.Table}: the masking rules have changed since this was downloaded, so all of it is downloaded again");
+            }
+            else if (due && endpoint.UpdatedAfter && !full && state.Watermark is not null)
+            {
+                reporter.Line($"{endpoint.Table}: changes alone can miss some, so all of it is downloaded again every {endpoint.FullEvery!.Value.TotalDays:0} days");
             }
 
             var updatedAfter = incremental
@@ -265,6 +273,7 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
         if (fullCycle && !changed)
         {
             _complete.Add(endpoint.Table);
+            store.SetMeta(FullDownloadAt + endpoint.Table, (state.StartedAt ?? _now()).ToString("O", CultureInfo.InvariantCulture));
         }
 
         var summary = $"{endpoint.Table}: {Reporter.Number(store.Count(endpoint.Table))} records"
@@ -296,9 +305,19 @@ internal sealed class SyncRunner(bool anonymise, Store store, ApiClient api, Rep
     private static int? Number(Store store, string key) =>
         int.TryParse(store.GetMeta(key), NumberStyles.None, CultureInfo.InvariantCulture, out var version) ? version : null;
 
-    /// <summary>Masks the record when anonymisation is on. Nothing unmasked is ever handed to the store.</summary>
-    private JsonObject Prepare(JsonObject record, Endpoint endpoint)
+    /// <summary>True when the endpoint is downloaded in full now and then, and the last time was that long ago.</summary>
+    private bool FullDownloadDue(Endpoint endpoint) =>
+        endpoint.FullEvery is { } every
+        && (!DateTimeOffset.TryParse(store.GetMeta(FullDownloadAt + endpoint.Table), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var last)
+            || _now() - last >= every);
+
+    /// <summary>
+    /// Keeps only the fields the endpoint keeps, and masks the record when
+    /// anonymisation is on. Nothing unmasked is ever handed to the store.
+    /// </summary>
+    private JsonObject Prepare(JsonObject original, Endpoint endpoint)
     {
+        var record = endpoint.Kept(original);
         if (!anonymise)
         {
             return record;

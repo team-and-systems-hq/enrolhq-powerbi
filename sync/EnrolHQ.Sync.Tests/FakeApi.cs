@@ -88,7 +88,9 @@ internal sealed class FakeApi : HttpMessageHandler
         _stopper?.Invoke();
         cancel.ThrowIfCancellationRequested();
 
-        var path = request.RequestUri!.AbsolutePath["/api/v2/".Length..];
+        // Paths under /api/v2/ as the endpoints write them; any other keeps its full path.
+        var absolute = request.RequestUri!.AbsolutePath;
+        var path = absolute.StartsWith("/api/v2/", StringComparison.Ordinal) ? absolute["/api/v2/".Length..] : absolute;
         Requests.Add($"{request.Method} {path}{request.RequestUri.Query}");
 
         if (_interruptions.Count > 0 && _interruptions.Dequeue()(request) is { } interruption)
@@ -116,10 +118,11 @@ internal sealed class FakeApi : HttpMessageHandler
         BeforeAnswer?.Invoke(path);
 
         // applications/{id}/ answers one record.
-        var parts = path.TrimEnd('/').Split('/');
-        if (parts.Length == 2 && _records.TryGetValue(parts[0] + "/", out var all))
+        var trimmed = path.TrimEnd('/');
+        var cut = trimmed.LastIndexOf('/');
+        if (!_records.ContainsKey(path) && cut > 0 && _records.TryGetValue(trimmed[..(cut + 1)], out var all))
         {
-            var one = all.FirstOrDefault(record => (string?)record["id"] == parts[1]);
+            var one = all.FirstOrDefault(record => (string?)record["id"] == trimmed[(cut + 1)..]);
             return Task.FromResult(one is null ? new HttpResponseMessage(HttpStatusCode.NotFound) : Dated(Json(one.DeepClone())));
         }
 

@@ -27,16 +27,28 @@ public class PowerBiProjectTests
     private static string Describe((string FromTable, string FromColumn, string ToTable, string ToColumn, bool Active) relationship) =>
         $"{relationship.FromTable}.{relationship.FromColumn} -> {relationship.ToTable}.{relationship.ToColumn}";
 
+    private static readonly ExportedTable[] SchoolWithAdmissionProcesses =
+    [
+        .. School,
+        Table("admission_processes", "id", "title", "campus"),
+        Table("admission_processes_forms", "admission_process_id", "id", "custom_form"),
+        Table("student_applications", "id", "student_profile", "admission_process", "application_status", "campus", "attendance_type"),
+        Table("student_applications_form_submits", "student_application_id", "id", "form"),
+    ];
+
     /// <summary>
     /// Power BI refuses to open a model in which filters can travel between
     /// two tables by more than one route.
     /// </summary>
-    [Fact]
-    public void Filters_never_have_two_routes_between_the_same_tables()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Filters_never_have_two_routes_between_the_same_tables(bool admissionProcesses)
     {
-        var active = PowerBiProject.Relationships(School).Where(relationship => relationship.Active).ToList();
+        var tables = admissionProcesses ? SchoolWithAdmissionProcesses : School;
+        var active = PowerBiProject.Relationships(tables).Where(relationship => relationship.Active).ToList();
 
-        foreach (var start in School.Select(table => table.Name))
+        foreach (var start in tables.Select(table => table.Name))
         {
             var routes = new Dictionary<string, int> { [start] = 1 };
             var queue = new Queue<string>([start]);
@@ -82,6 +94,29 @@ public class PowerBiProjectTests
         // Applications and events both belong to a campus, and bookings join students to events.
         Assert.Contains("events.campus -> campuses.id", inactive);
         Assert.Equal(2, inactive.Count);
+    }
+
+    /// <summary>
+    /// A student's applications are sliced by anything about the student, so
+    /// that link stays on, and the lookups that would clash with it go off.
+    /// </summary>
+    [Fact]
+    public void Links_each_student_application_to_the_student_and_its_admission_process()
+    {
+        var relationships = PowerBiProject.Relationships(SchoolWithAdmissionProcesses);
+        var active = relationships.Where(relationship => relationship.Active).Select(Describe).ToList();
+        var inactive = relationships.Where(relationship => !relationship.Active).Select(Describe).ToList();
+
+        Assert.Contains("student_applications.student_profile -> applications.id", active);
+        Assert.Contains("student_applications.admission_process -> admission_processes.id", active);
+        Assert.Contains("student_applications_form_submits.student_application_id -> student_applications.id", active);
+        Assert.Contains("student_applications_form_submits.form -> forms.id", active);
+        Assert.Contains("admission_processes_forms.admission_process_id -> admission_processes.id", active);
+        Assert.Contains("admission_processes_forms.custom_form -> forms.id", active);
+        Assert.Contains("student_applications.application_status -> application_statuses.application_status", inactive);
+        Assert.Contains("student_applications.campus -> campuses.id", inactive);
+        Assert.Contains("student_applications.attendance_type -> attendance_types.id", inactive);
+        Assert.Contains("admission_processes.campus -> campuses.id", inactive);
     }
 
     [Fact]
